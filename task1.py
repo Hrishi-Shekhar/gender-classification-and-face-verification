@@ -19,6 +19,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import GlobalAveragePooling2D
 from xgboost import XGBClassifier
 
+
 # ------------------- Preprocessing -------------------
 def preprocess_image(image_path, target_size=(300, 300)):
     image = cv2.imread(image_path)
@@ -75,10 +76,10 @@ train_features = scaler.fit_transform(train_features)
 val_features = scaler.transform(val_features)
 
 # ------------------- PCA -------------------
-print("[INFO] Applying PCA to reduce dimensionality...")
-pca = PCA(n_components=256, random_state=42)
-train_features = pca.fit_transform(train_features)
-val_features = pca.transform(val_features)
+# print("[INFO] Applying PCA to reduce dimensionality...")
+# pca = PCA(n_components=256, random_state=42)
+# train_features = pca.fit_transform(train_features)
+# val_features = pca.transform(val_features)
 
 # ------------------- Cross-Validation -------------------
 print("\n[INFO] Performing 5-Fold Stratified Cross-Validation on Training Data...")
@@ -86,7 +87,7 @@ skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 cv_classifiers = {
     "Logistic Regression": LogisticRegression(max_iter=1000, n_jobs=-1, random_state=42),
-    "Random Forest": RandomForestClassifier(n_estimators=50, max_depth=5, min_samples_split=10, min_samples_leaf=4, n_jobs=-1, random_state=42),
+    "Random Forest": RandomForestClassifier(n_estimators=50, max_depth=5, min_samples_split=10, min_samples_leaf=4, n_jobs=-1, random_state=42, class_weight='balanced'),
     "SVM": SVC(kernel='linear', probability=False, random_state=42),
     "KNN": KNeighborsClassifier(n_neighbors=5),
     "XGBoost": XGBClassifier(
