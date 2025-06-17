@@ -1,2 +1,4 @@
-print(f"AUC-ROC: {roc_auc_score(valY, clf.predict_proba(val_features), multi_class='ovr'):.4f}")
-# print(f"MCC: {matthews_corrcoef(valY, preds):.4f}")
+print("[INFO] Applying PCA to reduce dimensionality...")
+# pca = PCA(n_components=256, random_state=42)
+# train_features = pca.fit_transform(train_features)
+# val_features = pca.transform(val_features)
