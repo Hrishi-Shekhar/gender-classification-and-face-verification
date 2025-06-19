@@ -3,7 +3,7 @@ from imutils import paths
 import imageio.v2 as imageio  # For compatibility with newer imageio versions
 import imgaug.augmenters as iaa
 
-def augment_minority_class(class_name='female', augment_count=3, input_dir='Comys_Hackathon5/Comys_Hackathon5/Task_A'):
+def augment_minority_class(class_name='female', augment_count=3, input_dir='Comys_Hackathon5 (1)/Comys_Hackathon5/Task_A'):
     """
     Augments images of a minority class in the training dataset.
 
@@ -37,4 +37,4 @@ def augment_minority_class(class_name='female', augment_count=3, input_dir='Comy
     print(f"[INFO] Done augmenting {len(image_paths)} images × {augment_count} times.")
 
 # Example usage
-# augment_minority_class(class_name='female', augment_count=4)
+# augment_minority_class(class_name='female', augment_count=3)

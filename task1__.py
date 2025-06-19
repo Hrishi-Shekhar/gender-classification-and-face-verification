@@ -40,7 +40,7 @@ def load_and_preprocess_data(image_paths, target_size):
     return np.array(data), np.array(labels)
 
 # ------------------- Data Load -------------------
-input_dir = 'Comys_Hackathon5/Comys_Hackathon5/Task_A'
+input_dir = 'Comys_Hackathon5 (1)/Comys_Hackathon5/Task_A'
 target_size = (300, 300)
 
 train_paths = list(paths.list_images(os.path.join(input_dir, 'train')))
