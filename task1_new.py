@@ -9,15 +9,18 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
-from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from sklearn.decomposition import PCA
 from sklearn.model_selection import StratifiedKFold
 from collections import defaultdict
-from tensorflow.keras.applications import EfficientNetB3
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import GlobalAveragePooling2D
 from xgboost import XGBClassifier
+
+from tensorflow.keras.applications import EfficientNetB3, ResNet50
+from tensorflow.keras.applications.efficientnet import preprocess_input as preprocess_efficient
+from tensorflow.keras.applications.resnet50 import preprocess_input as preprocess_resnet
+from tensorflow.keras.layers import GlobalAveragePooling2D
+from tensorflow.keras.models import Model
+from deepface import DeepFace
+from tqdm import tqdm
 
 
 # ------------------- Preprocessing -------------------
@@ -26,7 +29,7 @@ def preprocess_image(image_path, target_size=(300, 300)):
     if image is None:
         raise ValueError(f"Could not read image: {image_path}")
     image = cv2.resize(image, target_size)
-    image = image.astype("float32") / 255.0
+    image = image.astype("float32")
     return image
 
 def load_and_preprocess_data(image_paths, target_size):
@@ -53,37 +56,53 @@ valX, valY = load_and_preprocess_data(val_paths, target_size)
 le = LabelEncoder()
 trainY = le.fit_transform(trainY)
 valY = le.transform(valY)
-num_classes = len(le.classes_)
 
+# ------------------- Model Loading -------------------
+print("[INFO] Loading EfficientNetB3 and ResNet50 models...")
+eff_model = EfficientNetB3(weights='imagenet', include_top=False, input_shape=(300, 300, 3))
+eff_model.trainable = False
+eff_out = GlobalAveragePooling2D()(eff_model.output)
+eff_model = Model(inputs=eff_model.input, outputs=eff_out)
+
+res_model = ResNet50(weights='imagenet', include_top=False, input_shape=(300, 300, 3))
+res_model.trainable = False
+res_out = GlobalAveragePooling2D()(res_model.output)
+res_model = Model(inputs=res_model.input, outputs=res_out)
 
 # ------------------- Feature Extraction -------------------
-print("[INFO] Extracting features using EfficientNetB3 + GAP...")
-base_model = EfficientNetB3(weights='imagenet', include_top=False, input_shape=(300, 300, 3))
+print("[INFO] Extracting and concatenating features...")
+trainX_eff = preprocess_efficient(trainX.copy())
+valX_eff = preprocess_efficient(valX.copy())
+train_eff_features = eff_model.predict(trainX_eff, batch_size=16, verbose=1)
+val_eff_features = eff_model.predict(valX_eff, batch_size=16, verbose=1)
 
-# UNFREEZE TOP 20 LAYERS FOR FINE-TUNING
-base_model.trainable = True
-for layer in base_model.layers[:-20]:  # Freeze all but top 20 layers
-    layer.trainable = False
+trainX_res = preprocess_resnet(trainX.copy())
+valX_res = preprocess_resnet(valX.copy())
+train_res_features = res_model.predict(trainX_res, batch_size=16, verbose=1)
+val_res_features = res_model.predict(valX_res, batch_size=16, verbose=1)
 
-from tensorflow.keras.layers import Dropout
+def extract_deepface_features(image_paths):
+    features = []
+    for path in tqdm(image_paths, desc="Extracting VGGFace features"):
+        try:
+            rep = DeepFace.represent(img_path=path, model_name='VGG-Face', enforce_detection=False)[0]["embedding"]
+            features.append(rep)
+        except Exception as e:
+            print(f"[WARNING] Failed to process {path}: {e}")
+            features.append(np.zeros(2622))  # fallback to zero vector
+    return np.array(features)
 
-x = GlobalAveragePooling2D()(base_model.output)
-model = Model(inputs=base_model.input, outputs=x)
+# Extract features
+train_face_features = extract_deepface_features(train_paths)
+val_face_features = extract_deepface_features(val_paths)
 
-
-train_features = model.predict(trainX, batch_size=16, verbose=1)
-val_features = model.predict(valX, batch_size=16, verbose=1)
+train_features = np.concatenate([train_eff_features, train_res_features, train_face_features], axis=1)
+val_features = np.concatenate([val_eff_features, val_res_features, val_face_features], axis=1)
 
 # ------------------- Feature Normalization -------------------
 scaler = StandardScaler()
 train_features = scaler.fit_transform(train_features)
 val_features = scaler.transform(val_features)
-
-# ------------------- PCA -------------------
-# print("[INFO] Applying PCA to reduce dimensionality...")
-# pca = PCA(n_components=128, random_state=42)
-# train_features = pca.fit_transform(train_features)
-# val_features = pca.transform(val_features)
 
 # ------------------- Cross-Validation -------------------
 print("\n[INFO] Performing 5-Fold Stratified Cross-Validation on Training Data...")
@@ -93,7 +112,6 @@ cv_classifiers = {
     "Logistic Regression": LogisticRegression(max_iter=1000, n_jobs=-1, random_state=42),
     "Random Forest": RandomForestClassifier(n_estimators=50, max_depth=5, min_samples_split=10, min_samples_leaf=4, n_jobs=-1, random_state=42, class_weight='balanced'),
     "SVM": SVC(kernel='linear', probability=False, random_state=42),
-    #"KNN": KNeighborsClassifier(n_neighbors=5),
     "XGBoost": XGBClassifier(
         n_estimators=150,
         learning_rate=0.05,

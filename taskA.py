@@ -19,6 +19,40 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import GlobalAveragePooling2D
 from xgboost import XGBClassifier
 
+import imgaug.augmenters as iaa
+import imageio.v2 as imageio  # imageio v2 for compatibility
+
+def augment_minority_class(class_name='female', augment_count=3, input_dir='Comys_Hackathon5/Comys_Hackathon5/Task_A'):
+    """
+    Augments images of a minority class in the training dataset.
+
+    Args:
+        class_name (str): Folder name of the class to augment.
+        augment_count (int): Number of augmentations per image.
+        input_dir (str): Root directory containing 'train' and 'val' folders.
+    """
+    print(f"[INFO] Augmenting '{class_name}' images in training set...")
+
+    female_train_dir = os.path.join(input_dir, 'train', class_name)
+    image_paths = list(paths.list_images(female_train_dir))
+
+    augmenters = iaa.Sequential([
+        iaa.Fliplr(0.5),
+        iaa.Affine(rotate=(-15, 15), scale=(0.9, 1.1)),
+        iaa.AdditiveGaussianNoise(scale=0.02 * 255),
+        iaa.Multiply((0.9, 1.1)),
+        iaa.LinearContrast((0.8, 1.2))
+    ])
+
+    for idx, img_path in enumerate(image_paths):
+        image = imageio.imread(img_path)
+        for aug_idx in range(augment_count):
+            aug_image = augmenters(image=image)
+            filename = f"aug_{idx}_{aug_idx}.jpg"
+            imageio.imwrite(os.path.join(female_train_dir, filename), aug_image)
+
+    print(f"[INFO] Done augmenting {len(image_paths)} images × {augment_count} times.")
+
 
 # ------------------- Preprocessing -------------------
 def preprocess_image(image_path, target_size=(300, 300)):
@@ -43,6 +77,7 @@ def load_and_preprocess_data(image_paths, target_size):
 input_dir = 'Comys_Hackathon5/Comys_Hackathon5/Task_A'
 target_size = (300, 300)
 
+# augment_minority_class(class_name='female', augment_count=4, input_dir=input_dir)
 train_paths = list(paths.list_images(os.path.join(input_dir, 'train')))
 val_paths = list(paths.list_images(os.path.join(input_dir, 'val')))
 print(f"[INFO] Found {len(train_paths)} training and {len(val_paths)} validation images.")
@@ -57,24 +92,56 @@ num_classes = len(le.classes_)
 
 
 # ------------------- Feature Extraction -------------------
-print("[INFO] Extracting features using EfficientNetB3 + GAP...")
-base_model = EfficientNetB3(weights='imagenet', include_top=False, input_shape=(300, 300, 3))
+from tensorflow.keras.layers import Dropout, Dense, Input
+from tensorflow.keras.models import Model
+import tensorflow as tf
 
-# UNFREEZE TOP 20 LAYERS FOR FINE-TUNING
+# ------------------- Fine-tuned EfficientNetB3 -------------------
+print("[INFO] Building and fine-tuning EfficientNetB3 model...")
+
+# Set random seed due to deterministic ops
+tf.random.set_seed(42)
+
+# Load EfficientNetB3 base
+base_model = EfficientNetB3(weights='imagenet', include_top=False, input_shape=(300, 300, 3))
 base_model.trainable = True
-for layer in base_model.layers[:-20]:  # Freeze all but top 20 layers
+
+# Freeze all layers except last 20
+for layer in base_model.layers[:-20]:
     layer.trainable = False
 
-from tensorflow.keras.layers import Dropout
+# Add custom classification head
+inputs = Input(shape=(300, 300, 3))
+x = base_model(inputs, training=True)
+x = GlobalAveragePooling2D()(x)
+x = Dropout(0.3)(x)
+outputs = Dense(num_classes, activation='softmax')(x)
 
-x = GlobalAveragePooling2D()(base_model.output)
-model = Model(inputs=base_model.input, outputs=x)
+model = Model(inputs, outputs)
 
+# Compile model
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+              loss='sparse_categorical_crossentropy',
+              metrics=['accuracy'])
 
-train_features = model.predict(trainX, batch_size=16, verbose=1)
-val_features = model.predict(valX, batch_size=16, verbose=1)
+# ------------------- Train Model -------------------
+print("[INFO] Training EfficientNetB3 on dataset...")
+model.fit(trainX, trainY, validation_data=(valX, valY), batch_size=16, epochs=10)
 
-# ------------------- Feature Normalization -------------------
+# ------------------- Evaluate Model -------------------
+print("[INFO] Evaluating fine-tuned model on validation set...")
+preds = np.argmax(model.predict(valX), axis=1)
+
+from sklearn.metrics import classification_report
+print(classification_report(valY, preds, target_names=le.classes_))
+
+# ------------------- Feature Extraction from Fine-tuned Model -------------------
+print("[INFO] Extracting features from fine-tuned model for ML classifiers...")
+feature_model = Model(inputs=model.input, outputs=model.layers[-3].output)  # output before dropout
+train_features = feature_model.predict(trainX, batch_size=16, verbose=1)
+val_features = feature_model.predict(valX, batch_size=16, verbose=1)
+
+# Standardize
 scaler = StandardScaler()
 train_features = scaler.fit_transform(train_features)
 val_features = scaler.transform(val_features)
@@ -90,9 +157,9 @@ print("\n[INFO] Performing 5-Fold Stratified Cross-Validation on Training Data..
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 cv_classifiers = {
-    "Logistic Regression": LogisticRegression(max_iter=1000, n_jobs=-1, random_state=42),
+    "Logistic Regression": LogisticRegression(max_iter=1000, n_jobs=-1, random_state=42, class_weight='balanced'),
     "Random Forest": RandomForestClassifier(n_estimators=50, max_depth=5, min_samples_split=10, min_samples_leaf=4, n_jobs=-1, random_state=42, class_weight='balanced'),
-    "SVM": SVC(kernel='linear', probability=False, random_state=42),
+    "SVM": SVC(kernel='linear', probability=False, random_state=42, class_weight='balanced'),
     #"KNN": KNeighborsClassifier(n_neighbors=5),
     "XGBoost": XGBClassifier(
         n_estimators=150,
