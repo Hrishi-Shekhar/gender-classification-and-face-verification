@@ -1,6 +1,25 @@
-opencv-python
-imutils
-numpy
-scikit-learn
-xgboost
-tensorflow
+# Core packages
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.4.2
+matplotlib==3.8.4
+opencv-python==4.9.0.80
+imutils==0.5.4
+tqdm==4.66.4
+
+# Deep learning
+tensorflow==2.15.0
+keras==2.15.0
+
+# XGBoost and other models
+xgboost==2.0.3
+lightgbm==4.3.0
+catboost==1.2.5
+
+# Face recognition
+deepface==0.0.79
+
+protobuf==3.20.*
+h5py==3.10.0
+
+
