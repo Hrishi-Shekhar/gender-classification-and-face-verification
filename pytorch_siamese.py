@@ -158,6 +158,10 @@ class SiameseModel(nn.Module):
         a = self.encoder(a)
         b = self.encoder(b)
         diff = torch.abs(a - b)
+        diff = nn.functional.normalize(diff, p=2, dim=1)
+        diff = nn.functional.dropout(diff, p=0.3, training=self.training)
+        diff = nn.functional.relu(diff)
+        diff = nn.functional.normalize(diff, p=2, dim=1)
         return self.classifier(diff).squeeze()
 
 def train(model, dataloader, epochs=20):
