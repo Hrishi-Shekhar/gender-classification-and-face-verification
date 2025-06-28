@@ -7,5 +7,4 @@ embed_cache
 face_cache
 cached_pairs.npz
 create_distortions.py
-cache
 .gitattributes
