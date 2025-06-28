@@ -3,10 +3,18 @@ import random
 import numpy as np
 import tensorflow as tf
 from deepface import DeepFace
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 import pickle
+
+# Set environment for reproducibility
+os.environ['PYTHONHASHSEED'] = '42'
+os.environ['TF_DETERMINISTIC_OPS'] = '1'
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+tf.random.set_seed(SEED)
 
 # Config
 IMAGE_SIZE = (160, 160)
@@ -16,9 +24,13 @@ EMBED_MODEL = 'ArcFace'
 FACE_CACHE = 'face_cache'
 EMBED_CACHE = 'embed_cache'
 PAIR_CACHE = 'cached_pairs.npz'
+MODEL_PATH = 'siamese_model.h5'
+
+# Create necessary directories
 os.makedirs(FACE_CACHE, exist_ok=True)
 os.makedirs(EMBED_CACHE, exist_ok=True)
 
+# --------------------- Feature Caching ---------------------
 def get_cached_face(split, person_id, img_path):
     key = f"{split}_{person_id}_{os.path.basename(img_path)}"
     cache_path = os.path.join(FACE_CACHE, key + '.npy')
@@ -52,6 +64,7 @@ def get_cached_embedding(split, person_id, img_path):
         print(f"Embedding failed: {img_path} - {e}")
         return None
 
+# --------------------- Data Loader ---------------------
 def load_embeddings(folder, split='train', max_images_per_person=50):
     data = {}
     for person_id in tqdm(os.listdir(folder), desc=f"Loading {split} embeddings"):
@@ -77,7 +90,9 @@ def load_embeddings(folder, split='train', max_images_per_person=50):
             data[person_id] = {'clean': clean_embs, 'distorted': distorted_embs}
     return data
 
-def create_embedding_pairs(data, max_pairs_per_class=5):
+# --------------------- Pair Generator ---------------------
+def create_embedding_pairs(data, max_pairs_per_class=10):
+    random.seed(SEED)
     if os.path.exists(PAIR_CACHE):
         print("\n✅ Loading cached pairs...")
         cached = np.load(PAIR_CACHE)
@@ -114,6 +129,7 @@ def create_embedding_pairs(data, max_pairs_per_class=5):
     np.savez(PAIR_CACHE, p1=p1, p2=p2, labels=labels)
     return p1, p2, labels
 
+# --------------------- Model Builder ---------------------
 def build_siamese_model(input_dim=EMBED_DIM):
     input_a = tf.keras.Input(shape=(input_dim,))
     input_b = tf.keras.Input(shape=(input_dim,))
@@ -123,13 +139,16 @@ def build_siamese_model(input_dim=EMBED_DIM):
     model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
     return model
 
-def evaluate_on_val(val_data, model, threshold=0.5):
+# --------------------- Evaluation ---------------------
+def evaluate_split(data, model, threshold=0.5, split_name="VAL"):
     y_true, y_pred = [], []
-    for person_id, sets in tqdm(val_data.items(), desc="Evaluating"):
+
+    for person_id, sets in tqdm(data.items(), desc=f"Evaluating [{split_name}]"):
         clean_embs = sets['clean']
         distorted_embs = sets['distorted']
         if not clean_embs or not distorted_embs:
             continue
+
         c_stack = np.stack(clean_embs)
         for d_emb in distorted_embs:
             d_stack = np.repeat(np.expand_dims(d_emb, 0), len(c_stack), axis=0)
@@ -137,11 +156,22 @@ def evaluate_on_val(val_data, model, threshold=0.5):
             pred = person_id if np.max(sims) > threshold else "unknown"
             y_true.append(person_id)
             y_pred.append(pred)
-    acc = accuracy_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
-    print(f"\n[VAL] Accuracy: {acc:.4f}, F1 Score: {f1:.4f}")
 
-def main():
+    y_true_binary = [1] * len(y_true)
+    y_pred_binary = [1 if p == t else 0 for p, t in zip(y_pred, y_true)]
+
+    acc = accuracy_score(y_true_binary, y_pred_binary)
+    f1 = f1_score(y_true_binary, y_pred_binary, average='binary', zero_division=0)
+    precision = precision_score(y_true_binary, y_pred_binary, average='binary', zero_division=0)
+    recall = recall_score(y_true_binary, y_pred_binary, average='binary', zero_division=0)
+
+    print(f"\n[{split_name}] Accuracy:  {acc:.4f}")
+    print(f"[{split_name}] Precision: {precision:.4f}")
+    print(f"[{split_name}] Recall:    {recall:.4f}")
+    print(f"[{split_name}] F1 Score:  {f1:.4f}")
+
+# --------------------- Main ---------------------
+def main(test_dir=None):
     root = 'Comys_Hackathon5 (1)/Comys_Hackathon5/Task_B'
     train_root = os.path.join(root, 'train')
     val_root = os.path.join(root, 'val')
@@ -150,17 +180,34 @@ def main():
     train_data = load_embeddings(train_root, split='train')
     val_data = load_embeddings(val_root, split='val')
 
+    test_data = None
+    if test_dir and os.path.exists(test_dir):
+        print("\n📥 Loading test embeddings...")
+        test_data = load_embeddings(test_dir, split='test')
+
     print("\n🔍 Creating pairs with hard negatives...")
     p1, p2, labels = create_embedding_pairs(train_data)
 
-    print("\n🧠 Building Siamese model...")
-    model = build_siamese_model()
-
-    print("\n🚀 Training...")
-    model.fit([p1, p2], labels, batch_size=32, epochs=10, validation_split=0.1)
+    if os.path.exists(MODEL_PATH):
+        print(f"\n✅ Found saved model at {MODEL_PATH}. Loading...")
+        model = tf.keras.models.load_model(MODEL_PATH)
+    else:
+        print("\n🧠 Building and training new Siamese model...")
+        model = build_siamese_model()
+        print("\n🚀 Training...")
+        model.fit([p1, p2], labels, batch_size=32, epochs=10, validation_split=0.1)
+        print(f"\n💾 Saving model to {MODEL_PATH}")
+        model.save(MODEL_PATH)
 
     print("\n✅ Evaluating on validation set...")
-    evaluate_on_val(val_data, model)
+    evaluate_split(val_data, model, threshold=0.5, split_name="VAL")
 
+    if test_data:
+        print("\n✅ Evaluating on test set...")
+        evaluate_split(test_data, model, threshold=0.5, split_name="TEST")
+
+# --------------------- Entry Point ---------------------
 if __name__ == "__main__":
-    main()
+    # Set test_dir to the path to your test directory or None
+    test_dir = r"C:\Users\hrish\Desktop\test_dataset"  # <-- Update or set to None
+    main(test_dir=test_dir)
