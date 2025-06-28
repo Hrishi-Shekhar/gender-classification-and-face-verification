@@ -11,6 +11,7 @@ from sklearn.metrics import accuracy_score, f1_score
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 import pathlib
+import joblib
 
 # Set random seed for reproducibility
 SEED = 42
@@ -28,6 +29,7 @@ EMBED_MODEL = 'ArcFace'
 FACE_CACHE = 'face_cache'
 EMBED_CACHE = 'embed_cache'
 PAIR_CACHE = 'cached_pairs.npz'
+MODEL_PATH = 'siamese_model.pth'
 os.makedirs(FACE_CACHE, exist_ok=True)
 os.makedirs(EMBED_CACHE, exist_ok=True)
 
@@ -180,6 +182,7 @@ def train(model, dataloader, epochs=20):
             optim.step()
             total_loss += loss.item()
         print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss/len(dataloader):.4f}")
+    torch.save(model.state_dict(), MODEL_PATH)
 
 def evaluate_on_val(val_data, model, threshold=0.5):
     y_true, y_pred = [], []
@@ -202,16 +205,21 @@ def evaluate_on_val(val_data, model, threshold=0.5):
     print("[VAL] F1:", f1_score(y_true, y_pred, average='macro', zero_division=0))
 
 def main():
-    root = r'C:\\Users\\roytu\\Downloads\\TASKB_COMYS\\Comys_Hackathon5 (1)\\Comys_Hackathon5\\Task_B'
-    train_data = load_embeddings(os.path.join(root, 'train'), 'train')
+    root = 'Comys_Hackathon5 (1)/Comys_Hackathon5/Task_B'
     val_data = load_embeddings(os.path.join(root, 'val'), 'val')
 
-    p1, p2, labels = create_embedding_pairs(train_data)
-    print(f"Training Pairs: Positive={np.sum(labels==1)}, Negative={np.sum(labels==0)}")
-    train_loader = DataLoader(SiameseDataset(p1, p2, labels), batch_size=64, shuffle=True)
-
     model = SiameseModel()
-    train(model, train_loader)
+    if os.path.exists(MODEL_PATH):
+        model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+        print("[INFO] Loaded saved model. Skipping training.")
+    else:
+        train_data = load_embeddings(os.path.join(root, 'train'), 'train')
+        p1, p2, labels = create_embedding_pairs(train_data)
+        print(f"Training Pairs: Positive={np.sum(labels==1)}, Negative={np.sum(labels==0)}")
+        train_loader = DataLoader(SiameseDataset(p1, p2, labels), batch_size=64, shuffle=True)
+        model = SiameseModel()
+        train(model, train_loader)
+
     evaluate_on_val(val_data, model)
 
 if __name__ == "__main__":
