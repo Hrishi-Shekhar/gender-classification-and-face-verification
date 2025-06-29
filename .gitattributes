@@ -1,0 +1,8 @@
+*.jpg filter=lfs diff=lfs merge=lfs -text
+*.npy filter=lfs diff=lfs merge=lfs -text
+*.npz filter=lfs diff=lfs merge=lfs -text
+cache_taskA/*.npy filter=lfs diff=lfs merge=lfs -text
+cache_taskA/*.pkl filter=lfs diff=lfs merge=lfs -text
+*.h5 filter=lfs diff=lfs merge=lfs -text
+embed_cache/* filter=lfs diff=lfs merge=lfs -text
+cached_pairs.npz filter=lfs diff=lfs merge=lfs -text
