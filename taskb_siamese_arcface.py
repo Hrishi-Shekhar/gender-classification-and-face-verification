@@ -8,7 +8,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 import pickle
 
-# Set environment for reproducibility
+# --------------------- Environment Setup ---------------------
 os.environ['PYTHONHASHSEED'] = '42'
 os.environ['TF_DETERMINISTIC_OPS'] = '1'
 SEED = 42
@@ -16,7 +16,7 @@ random.seed(SEED)
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
 
-# Config
+# --------------------- Configuration ---------------------
 IMAGE_SIZE = (160, 160)
 EMBED_DIM = 512
 DETECTOR = 'opencv'
@@ -94,7 +94,7 @@ def load_embeddings(folder, split='train', max_images_per_person=50):
 def create_embedding_pairs(data, max_pairs_per_class=10):
     random.seed(SEED)
     if os.path.exists(PAIR_CACHE):
-        print("\n✅ Loading cached pairs...")
+        print("\nLoading cached pairs...")
         cached = np.load(PAIR_CACHE)
         return cached['p1'], cached['p2'], cached['labels']
 
@@ -176,38 +176,41 @@ def main(test_dir=None):
     train_root = os.path.join(root, 'train')
     val_root = os.path.join(root, 'val')
 
-    print("\n📥 Loading embeddings...")
+    print("\nLoading embeddings...")
     train_data = load_embeddings(train_root, split='train')
     val_data = load_embeddings(val_root, split='val')
 
     test_data = None
     if test_dir and os.path.exists(test_dir):
-        print("\n📥 Loading test embeddings...")
+        print("\nLoading test embeddings...")
         test_data = load_embeddings(test_dir, split='test')
 
-    print("\n🔍 Creating pairs with hard negatives...")
+    print("\nCreating pairs with hard negatives...")
     p1, p2, labels = create_embedding_pairs(train_data)
 
     if os.path.exists(MODEL_PATH):
-        print(f"\n✅ Found saved model at {MODEL_PATH}. Loading...")
+        print(f"\nFound saved model at {MODEL_PATH}. Loading...")
         model = tf.keras.models.load_model(MODEL_PATH)
     else:
-        print("\n🧠 Building and training new Siamese model...")
+        print("\nBuilding and training new Siamese model...")
         model = build_siamese_model()
-        print("\n🚀 Training...")
+        print("\nTraining...")
         model.fit([p1, p2], labels, batch_size=32, epochs=10, validation_split=0.1)
-        print(f"\n💾 Saving model to {MODEL_PATH}")
+        print(f"\nSaving model to {MODEL_PATH}")
         model.save(MODEL_PATH)
 
-    print("\n✅ Evaluating on validation set...")
+    print("\nEvaluating on training set...")
+    evaluate_split(train_data, model, threshold=0.5, split_name="TRAIN")
+
+    print("\nEvaluating on validation set...")
     evaluate_split(val_data, model, threshold=0.5, split_name="VAL")
 
     if test_data:
-        print("\n✅ Evaluating on test set...")
+        print("\nEvaluating on test set...")
         evaluate_split(test_data, model, threshold=0.5, split_name="TEST")
 
 # --------------------- Entry Point ---------------------
 if __name__ == "__main__":
     # Set test_dir to the path to your test directory or None
-    test_dir = r"C:\Users\hrish\Desktop\test_dataset"  # <-- Update or set to None
+    test_dir = None
     main(test_dir=test_dir)

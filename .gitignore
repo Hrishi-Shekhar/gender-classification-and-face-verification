@@ -3,8 +3,5 @@ tempCodeRunnerFile.py
 taskB_triplet.py
 task2.py
 task2_new.py
-embed_cache
-face_cache
-cached_pairs.npz
 create_distortions.py
-.gitattributes
+face_cache
