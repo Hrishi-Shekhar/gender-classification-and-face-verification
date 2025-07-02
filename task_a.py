@@ -5,12 +5,10 @@ import random
 import numpy as np
 from tqdm import tqdm
 from imutils import paths
-from collections import defaultdict
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from sklearn.model_selection import StratifiedKFold
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -32,9 +30,27 @@ MODELS_DIR = "saved_models_taskA"
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(MODELS_DIR, exist_ok=True)
 
-# ------------------- Preprocessing Functions -------------------
+# ------------------- Utility Functions -------------------
+def cache_path(name): return os.path.join(CACHE_DIR, name)
+
+def load_pkl(name):
+    path = cache_path(name)
+    if os.path.exists(path):
+        return joblib.load(path)
+    return None
+
+def save_pkl(obj, name): joblib.dump(obj, cache_path(name))
+
+def load_npy(name):
+    path = cache_path(name)
+    if os.path.exists(path):
+        return np.load(path)
+    return None
+
+def save_npy(array, name): np.save(cache_path(name), array)
+
+# ------------------- Preprocessing -------------------
 def preprocess_image(image_path, target_size):
-    """Read and resize image to target size, then normalize to [0,1]."""
     image = cv2.imread(image_path)
     if image is None:
         raise ValueError(f"Could not read image: {image_path}")
@@ -42,70 +58,55 @@ def preprocess_image(image_path, target_size):
     image = image.astype("float32") / 255.0
     return image
 
-def cache_path(cache_dir, split_name, name):
-    """Helper to create a consistent cache filename."""
-    return os.path.join(cache_dir, f"{split_name}_{name}.npy")
-
-def load_and_preprocess_data(image_paths, target_size):
-    """Load and preprocess all images, extract labels from folder names."""
+def load_images_and_labels(image_paths, target_size):
     data, labels = [], []
-    for image_path in image_paths:
-        image = preprocess_image(image_path, target_size)
-        label = os.path.basename(os.path.dirname(image_path))
-        data.append(image)
-        labels.append(label)
+    for path in image_paths:
+        data.append(preprocess_image(path, target_size))
+        labels.append(os.path.basename(os.path.dirname(path)))
     return np.array(data), np.array(labels)
 
-# ------------------- Feature Extraction -------------------
-def extract_deepface_features(image_paths, split_name):
-    """Extract DeepFace (VGG-Face) embeddings, with caching."""
-    cache_file = cache_path(CACHE_DIR, split_name, "deepface")
-    if os.path.exists(cache_file):
-        return np.load(cache_file)
+# ------------------- DeepFace Features -------------------
+def extract_deepface_features(image_paths, split):
+    cached = load_npy(f"{split}_deepface.npy")
+    if cached is not None: return cached
     features = []
-    for path in tqdm(image_paths, desc=f"DeepFace ({split_name})"):
+    for path in tqdm(image_paths, desc=f"DeepFace ({split})"):
         try:
-            rep = DeepFace.represent(img_path=path, model_name='VGG-Face', enforce_detection=False)[0]["embedding"]
-            features.append(rep)
+            emb = DeepFace.represent(path, model_name='VGG-Face', enforce_detection=False)[0]['embedding']
+            features.append(emb)
         except:
-            features.append(np.zeros(2622))  # fallback for failed extraction
+            features.append(np.zeros(2622))
     features = np.array(features)
-    np.save(cache_file, features)
+    save_npy(features, f"{split}_deepface.npy")
     return features
 
+# ------------------- Torch Models -------------------
 def build_torch_model(arch):
-    """Initialize pretrained CNN backbone with final pooling removed."""
-    base_model = arch(pretrained=True)
-    base_model.eval()
-    for param in base_model.parameters():
-        param.requires_grad = False
-    modules = list(base_model.children())[:-1]
-    model = nn.Sequential(*modules)
-    return model.to(device)
+    base = arch(pretrained=True)
+    base.eval()
+    for p in base.parameters(): p.requires_grad = False
+    return nn.Sequential(*list(base.children())[:-1]).to(device)
 
-def extract_torch_features(model, images, split_name, name):
-    """Extract CNN features using PyTorch model with caching."""
-    cache_file = cache_path(CACHE_DIR, split_name, name)
-    if os.path.exists(cache_file):
-        return np.load(cache_file)
+def extract_torch_features(model, images, split, name):
+    cached = load_npy(f"{split}_{name}.npy")
+    if cached is not None: return cached
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize((224, 224)),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
-    features = []
+    feats = []
     with torch.no_grad():
-        for img in tqdm(images, desc=f"Extracting {name}"):
-            img_t = transform(img).unsqueeze(0).to(device)
-            feat = model(img_t).cpu().numpy().squeeze()
-            features.append(feat)
-    features = np.array(features)
-    np.save(cache_file, features)
-    return features
+        for img in tqdm(images, desc=f"{split} {name}"):
+            tensor = transform(img).unsqueeze(0).to(device)
+            feat = model(tensor).cpu().numpy().squeeze()
+            feats.append(feat)
+    feats = np.array(feats)
+    save_npy(feats, f"{split}_{name}.npy")
+    return feats
 
 # ------------------- Evaluation -------------------
 def evaluate_model(clf, X, y, name):
-    """Print standard classification metrics."""
     preds = clf.predict(X)
     print(f"\n{name} Metrics")
     print(f"Accuracy:  {accuracy_score(y, preds):.4f}")
@@ -113,85 +114,94 @@ def evaluate_model(clf, X, y, name):
     print(f"Recall:    {recall_score(y, preds, average='weighted'):.4f}")
     print(f"F1 Score:  {f1_score(y, preds, average='weighted'):.4f}")
 
-# ------------------- Main Pipeline -------------------
-def run_pipeline(base_dataset_dir, test_dir=None):
+# ------------------- Main -------------------
+def main(base_dataset_dir=None, test_dir=None):
     target_size = (224, 224)
-
-    # Step 1: Load image paths for each split
-    splits = {
-        'train': list(paths.list_images(os.path.join(base_dataset_dir, 'train'))),
-        'val': list(paths.list_images(os.path.join(base_dataset_dir, 'val')))
-    }
-    if test_dir:
-        splits['test'] = list(paths.list_images(test_dir))
-
-    # Step 2: Load and preprocess images + extract labels
-    images, labels = {}, {}
-    for split in splits:
-        print(f"[INFO] Loading {split} images: {len(splits[split])}")
-        images[split], labels[split] = load_and_preprocess_data(splits[split], target_size)
-
-    # Step 3: Label encoding (use cached encoder if exists)
-    le_path = os.path.join(CACHE_DIR, "label_encoder.pkl")
-    if os.path.exists(le_path):
-        le = joblib.load(le_path)
-    else:
-        le = LabelEncoder()
-        joblib.dump(le.fit(labels['train']), le_path)
-    for split in labels:
-        labels[split] = le.transform(labels[split])
-
-    # Step 4: Build feature extractors (ResNet + EfficientNet)
     resnet = build_torch_model(models.resnet50)
     efficient = build_torch_model(models.efficientnet_b3)
 
-    # Step 5: Extract and concatenate features from all sources
-    features = {}
-    for split in images:
-        res_feat = extract_torch_features(resnet, images[split], split, 'res')
-        eff_feat = extract_torch_features(efficient, images[split], split, 'eff')
-        df_feat = extract_deepface_features(splits[split], split)
-        features[split] = np.concatenate([res_feat, eff_feat, df_feat], axis=1)
+    splits = ['train', 'val']
+    images, labels, features = {}, {}, {}
 
-    # Step 6: Normalize features with StandardScaler
-    scaler_path = os.path.join(CACHE_DIR, "scaler.pkl")
-    if os.path.exists(scaler_path):
-        scaler = joblib.load(scaler_path)
-    else:
+    for split in splits:
+        img_file = f"{split}_labels.pkl"
+        if base_dataset_dir and not os.path.exists(cache_path(img_file)):
+            print(f"[INFO] Processing {split} from images...")
+            img_paths = list(paths.list_images(os.path.join(base_dataset_dir, split)))
+            X, y = load_images_and_labels(img_paths, target_size)
+            save_pkl(img_paths, f"{split}_paths.pkl")
+            save_pkl(y, img_file)
+            labels[split] = y
+            images[split] = X
+        else:
+            print(f"[INFO] Loading {split} from cache...")
+            labels[split] = load_pkl(img_file)
+            images[split] = None
+
+    # Label encoding
+    le = load_pkl("label_encoder.pkl")
+    if le is None:
+        le = LabelEncoder()
+        le.fit(labels['train'])
+        save_pkl(le, "label_encoder.pkl")
+    for split in splits:
+        labels[split] = le.transform(labels[split])
+
+    # Feature extraction
+    for split in splits:
+        if images[split] is not None:
+            img_paths = load_pkl(f"{split}_paths.pkl")
+            res = extract_torch_features(resnet, images[split], split, 'res')
+            eff = extract_torch_features(efficient, images[split], split, 'eff')
+            df = extract_deepface_features(img_paths, split)
+        else:
+            res = load_npy(f"{split}_res.npy")
+            eff = load_npy(f"{split}_eff.npy")
+            df = load_npy(f"{split}_deepface.npy")
+        features[split] = np.concatenate([res, eff, df], axis=1)
+
+    # Normalize
+    scaler = load_pkl("scaler.pkl")
+    if scaler is None:
         scaler = StandardScaler().fit(features['train'])
-        joblib.dump(scaler, scaler_path)
-    for split in features:
+        save_pkl(scaler, "scaler.pkl")
+    for split in splits:
         features[split] = scaler.transform(features[split])
 
-    # Step 7: Train or load classifiers
+    # Train classifiers
     classifiers = {
         "Logistic Regression": LogisticRegression(max_iter=1000, n_jobs=-1, random_state=SEED),
         "SVM": SVC(kernel='linear', probability=True, random_state=SEED)
     }
 
     for name, clf in classifiers.items():
-        model_path = os.path.join(MODELS_DIR, f"{name.replace(' ', '_')}.pkl")
-        if os.path.exists(model_path):
+        path = os.path.join(MODELS_DIR, f"{name.replace(' ', '_')}.pkl")
+        if os.path.exists(path):
             print(f"\n[INFO] Loading saved model: {name}")
-            clf = joblib.load(model_path)
+            clf = joblib.load(path)
         else:
             print(f"\n[INFO] Training: {name}")
             clf.fit(features['train'], labels['train'])
-            joblib.dump(clf, model_path)
+            joblib.dump(clf, path)
 
-        # Step 8: Evaluate model on all splits
         print(f"\n{name} - Training Performance")
         evaluate_model(clf, features['train'], labels['train'], 'Train')
-
         print(f"\n{name} - Validation Performance")
         evaluate_model(clf, features['val'], labels['val'], 'Val')
 
-        if 'test' in features:
+        if test_dir:
             print(f"\n{name} - Test Performance")
-            evaluate_model(clf, features['test'], labels['test'], 'Test')
+            test_paths = list(paths.list_images(test_dir))
+            test_images, test_labels = load_images_and_labels(test_paths, target_size)
+            test_labels = le.transform(test_labels)
+            res = extract_torch_features(resnet, test_images, 'test', 'res')  # not cached
+            eff = extract_torch_features(efficient, test_images, 'test', 'eff')
+            df = extract_deepface_features(test_paths, 'test')
+            test_feat = scaler.transform(np.concatenate([res, eff, df], axis=1))
+            evaluate_model(clf, test_feat, test_labels, 'Test')
 
-# ------------------- Entry Point -------------------
-if __name__ == '__main__':
-    base_dataset_dir = "Comys_Hackathon5 (1)/Comys_Hackathon5/Task_A"
-    test_dir = None    # Set test_dir to the path to your test directory or None
-    run_pipeline(base_dataset_dir, test_dir)
+# ------------------- Entry -------------------
+if __name__ == "__main__":
+    base_dataset_dir = None # base dir needed only on first run
+    test_dir = None  # or r"path/to/unseen/test"
+    main(base_dataset_dir, test_dir)
