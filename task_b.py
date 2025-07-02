@@ -8,6 +8,7 @@ from deepface import DeepFace
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
+import pickle
 
 # --------------------- Configuration ---------------------
 SEED = 42
@@ -18,12 +19,14 @@ EMBED_MODEL = 'ArcFace'
 FACE_CACHE = 'face_cache'
 EMBED_CACHE = 'embed_cache'
 PAIR_CACHE = 'cached_pairs.npz'
-MODEL_PATH = 'siamese_concat_model.pth'  # <== new model name
+MODEL_PATH = 'siamese_concat_model.pth'
+PREPROCESSED_DIR = 'preprocessed'
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 os.makedirs(FACE_CACHE, exist_ok=True)
 os.makedirs(EMBED_CACHE, exist_ok=True)
+os.makedirs(PREPROCESSED_DIR, exist_ok=True)
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
@@ -64,6 +67,12 @@ def get_cached_embedding(split, person_id, img_path):
 
 # --------------------- Data Loader ---------------------
 def load_embeddings(folder, split='train', max_images_per_person=50):
+    pkl_path = os.path.join(PREPROCESSED_DIR, f"{split}_data.pkl")
+    if os.path.exists(pkl_path):
+        print(f"\nLoaded {split}_data from cache: {pkl_path}")
+        with open(pkl_path, 'rb') as f:
+            return pickle.load(f)
+
     data = {}
     for person_id in tqdm(os.listdir(folder), desc=f"Loading {split} embeddings"):
         person_path = os.path.join(folder, person_id)
@@ -86,11 +95,16 @@ def load_embeddings(folder, split='train', max_images_per_person=50):
 
         if len(clean_embs + distorted_embs) >= 2:
             data[person_id] = {'clean': clean_embs, 'distorted': distorted_embs}
+
+    if split in ['train', 'val']:
+        with open(pkl_path, 'wb') as f:
+            pickle.dump(data, f)
+        print(f"\nSaved {split}_data to: {pkl_path}")
     return data
 
 def create_embedding_pairs(data, max_pairs_per_class=10):
     if os.path.exists(PAIR_CACHE):
-        print("\n✅ Loading cached pairs...")
+        print("\nLoading cached pairs...")
         cached = np.load(PAIR_CACHE)
         return cached['p1'], cached['p2'], cached['labels']
 
@@ -198,22 +212,33 @@ def evaluate_split(data, model, split_name="VAL", threshold=0.5):
 
 # --------------------- Main ---------------------
 def main(test_dir=None):
-    root = 'Comys_Hackathon5 (1)/Comys_Hackathon5/Task_B'
-    train_data = load_embeddings(os.path.join(root, 'train'), 'train')
-    val_data = load_embeddings(os.path.join(root, 'val'), 'val')
-    test_data = load_embeddings(test_dir, split='test') if test_dir and os.path.exists(test_dir) else None
+    train_pkl = os.path.join(PREPROCESSED_DIR, "train_data.pkl")
+    val_pkl = os.path.join(PREPROCESSED_DIR, "val_data.pkl")
+
+    if os.path.exists(train_pkl) and os.path.exists(val_pkl):
+        print("\nLoading train and val data from preprocessed .pkl files...")
+        with open(train_pkl, 'rb') as f: train_data = pickle.load(f)
+        with open(val_pkl, 'rb') as f: val_data = pickle.load(f)
+    # else:
+    #     root = 'Comys_Hackathon5 (1)/Comys_Hackathon5/Task_B'
+    #     train_data = load_embeddings(os.path.join(root, 'train'), 'train')
+    #     val_data = load_embeddings(os.path.join(root, 'val'), 'val')
+
+    test_data = None
+    if test_dir and os.path.exists(test_dir):
+        test_data = load_embeddings(test_dir, split='test')
 
     p1, p2, labels = create_embedding_pairs(train_data)
     train_loader = DataLoader(SiameseDataset(p1, p2, labels), batch_size=64, shuffle=True)
     model = SiameseModel()
 
     if os.path.exists(MODEL_PATH):
-        print(f"\n✅ Loading model from {MODEL_PATH}")
+        print(f"\nLoading model from {MODEL_PATH}")
         model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
     else:
-        print("\n🚀 Training model...")
+        print("\nTraining model...")
         train(model, train_loader, epochs=10)
-        print(f"\n💾 Saving model to {MODEL_PATH}")
+        print(f"\nSaving model to {MODEL_PATH}")
         torch.save(model.state_dict(), MODEL_PATH)
 
     evaluate_split(train_data, model, split_name="TRAIN")
@@ -223,4 +248,5 @@ def main(test_dir=None):
 
 # --------------------- Entry ---------------------
 if __name__ == "__main__":
-    main()
+    test_dir = None
+    main(test_dir)
