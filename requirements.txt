@@ -1,18 +1,21 @@
-# Deep Learning Frameworks
-tensorflow==2.15.0          # Compatible with Python 3.10–3.12
-torch==2.2.2                # Compatible with Python 3.12
-torchvision==0.17.2         # Must match torch version
-
-# DeepFace and dependencies
-deepface==0.0.83
-opencv-python==4.9.0.80     # For face detection
-
-# Scikit-Learn & Metrics
-scikit-learn==1.4.2
-numpy==1.26.4
-scipy==1.13.0
-
-# TQDM and Utilities
+# Core Python libraries
+numpy==1.24.4
+pandas==1.5.3
+scikit-learn==1.3.2
+joblib==1.3.2
 tqdm==4.66.4
-pillow==10.3.0              # Required for image processing
+imutils==0.5.4
 
+# Deep learning frameworks
+torch==2.2.2
+torchvision==0.17.2
+tensorflow==2.15.1  # Required by DeepFace
+
+# Image processing
+opencv-python==4.9.0.80
+
+# DeepFace for face recognition
+deepface==0.0.83
+
+# Optional for GPU determinism (already controlled in your code)
+# If CUDA is used, install the correct torch version via pip or conda
