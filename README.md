@@ -117,21 +117,19 @@ Accuracy, Precision, Recall, F1 Score for each of Train/Val/Test
 ```text
 Task A: Gender Classification
 Train Set
-
-Model	Accuracy	Precision	Recall	F1 Score
-Logistic Regression	1.00	1.00	1.00	1.00
-SVM	1.00	1.00	1.00	1.00
+Model	            Accuracy	Precision	 Recall	F1 Score
+Logistic Regression	1.00	    1.00	    1.00	 1.00
+SVM	                1.00	    1.00	    1.00	 1.00
 
 Validation Set
-
-Model	Accuracy	Precision	Recall	F1 Score
-Logistic Regression	0.9621	0.9619	0.9621	0.9617
-SVM	0.9621	0.9620	0.9621	0.9616
+Model	              Accuracy	Precision	 Recall	 F1 Score
+Logistic Regression	 0.9621	   0.9619	   0.9621	 0.9617
+SVM	                 0.9621	   0.9620	   0.9621	 0.9616
 
 Task B: Face Verification
-Dataset	Accuracy	Precision	Recall	F1 Score
-Train	1.00	1.00	1.00	1.00
-Validation	1.00	1.00	1.00	1.00
+Dataset	   Accuracy Precision	Recall F1 Score
+Train	      1.00	   1.00	     1.00	  1.00
+Validation	1.00	   1.00	     1.00	  1.00
 ```
 
 ## Dependencies
