@@ -46,6 +46,7 @@ Classify face images as **male** or **female** using pretrained CNNs as feature 
 
 ### Expected Dataset Structure
 
+```text
 dataset/
 ├── train/
 │ ├── male/
@@ -85,6 +86,7 @@ Verify if a distorted face belongs to the same identity as a clean reference ima
 
 ### Expected Dataset Structure
 
+```text
 dataset/
 ├── train/
 │   └── <person_id>/
@@ -106,6 +108,7 @@ Modify the main() function with correct test_dir path (optional).
 Accuracy, Precision, Recall, F1 Score for each of Train/Val/Test
 
 ## Observational Results-
+```text
 Task A: Gender Classification
 Train Set
 Model	            Accuracy	Precision	Recall	F1 Score
