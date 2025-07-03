@@ -114,7 +114,6 @@ Modify the main() function with correct test_dir path (optional).
 Accuracy, Precision, Recall, F1 Score for each of Train/Val/Test
 
 ## Observational Results-
-```text
 ### Task A: Gender Classification
 
 #### Train Set
@@ -140,7 +139,6 @@ Accuracy, Precision, Recall, F1 Score for each of Train/Val/Test
 | Train      | 1.00     | 1.00      | 1.00   | 1.00     |
 | Validation | 1.00     | 1.00      | 1.00   | 1.00     |
 
-```
 
 ## Dependencies
 Install required packages via:
