@@ -8,12 +8,13 @@ This repository contains two computer vision pipelines designed for face-based a
 Both tasks are implemented using a combination of pretrained deep learning models and classical ML techniques, with caching and modular structure for fast reproducibility.
 
 ## Cloning the Repository
-
+```text
 git clone https://github.com/Hrishi-Shekhar/gender-classification-and-face-verification.git
 cd gender-classification-and-face-verification
+```
 
 ## Repository Structure
-
+```text
 ├── task_a.py # Gender classification script
 ├── task_b.py # Face verification (Siamese network) script
 ├── cache_taskA/ # Feature and label cache for Task A
@@ -28,6 +29,7 @@ cd gender-classification-and-face-verification
 ├── .gitignore
 ├── requirements.txt
 └── README.md
+```
 
 ## Task A: Gender Classification
 
@@ -60,8 +62,9 @@ dataset/
 ```
 
 ### Run Instructions
-
+```bash
 python task_a.py
+```
 
 Modify base_dataset_dir and test_dir in the main() function as needed.
 
@@ -101,8 +104,9 @@ dataset/
 ```
 
 ### Run Instructions
-
+```bash
 python task_b.py
+```
 
 Modify the main() function with correct test_dir path (optional).
 
@@ -130,8 +134,9 @@ Validation	1.00	1.00	1.00	1.00
 
 ## Dependencies
 Install required packages via:
-
+```bash
 pip install -r requirements.txt
+```
 
 ## Caching & Reproducibility
 All intermediate data (embeddings, images, labels) are cached to accelerate reruns.
