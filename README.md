@@ -57,6 +57,7 @@ dataset/
 └── test/ (optional)
 ├── male/
 └── female/
+```
 
 ### Run Instructions
 
@@ -97,6 +98,7 @@ dataset/
 │   └── <person_id>/...
 └── test/      (optional)
     └── <person_id>/...
+```
 
 ### Run Instructions
 
@@ -124,6 +126,7 @@ Task B: Face Verification
 Dataset	 Accuracy Precision	Recall	F1 Score
 Train	    1.00	1.00	1.00	1.00
 Validation	1.00	1.00	1.00	1.00
+```
 
 ## Dependencies
 Install required packages via:
