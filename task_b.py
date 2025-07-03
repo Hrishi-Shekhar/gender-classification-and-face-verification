@@ -1,4 +1,6 @@
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import random
 import numpy as np
 import torch
@@ -19,7 +21,7 @@ EMBED_MODEL = 'ArcFace'
 FACE_CACHE = 'face_cache'
 EMBED_CACHE = 'embed_cache'
 PAIR_CACHE = 'cached_pairs.npz'
-MODEL_PATH = 'siamese_concat_model.pth'
+MODEL_PATH = 'siamese_model.pth'
 PREPROCESSED_DIR = 'preprocessed'
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

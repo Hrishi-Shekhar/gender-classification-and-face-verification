@@ -1,4 +1,14 @@
 import os
+import warnings
+# Suppress TensorFlow logs
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+# Suppress specific warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+warnings.filterwarnings('ignore', message='.*_register_pytree_node is deprecated.*')
+warnings.filterwarnings('ignore', message='.*sparse_softmax_cross_entropy is deprecated.*')
+# Suppress transformers logs
+from transformers.utils import logging
+logging.set_verbosity_error()
 import cv2
 import joblib
 import random

@@ -1,56 +1,133 @@
-Clone the Repository
+# Gender Classification & Face Verification
 
-git clone https://github.com/Hrishi-Shekhar/Hackathon.git
-cd Hackathon
+This repository contains two computer vision pipelines designed for face-based analytics:
 
-Requirements-
-Install required packages using:
-    pip install -r requirements.txt
+- **Task A**: Gender Classification — predict gender from face images.
+- **Task B**: Face Verification — match distorted faces to clean reference faces using learned embeddings.
 
-Pipeline Overview
-1. Image Preprocessing (Resizing, normalization)
+Both tasks are implemented using a combination of pretrained deep learning models and classical ML techniques, with caching and modular structure for fast reproducibility.
 
-2. Feature Extraction using EfficientNetB3 + Global Average Pooling
+## Cloning the Repository
 
-3. Dimensionality Reduction via PCA
+git clone https://github.com/Hrishi-Shekhar/gender-classification-and-face-verification.git
+cd gender-classification-and-face-verification
 
-4. Classification using:
+## Repository Structure
 
-    Logistic Regression
+├── task_a.py # Gender classification script
+├── task_b.py # Face verification (Siamese network) script
+├── cache_taskA/ # Feature and label cache for Task A
+├── embed_cache/ # Cached ArcFace embeddings (Task B)
+├── saved_models_taskA/ # Trained models (Task A)
+├── preprocessed/ # Pickled preprocessed data (Task B)
+├── cached_pairs.npz # stores precomputed positive and hard negative embedding pairs
+├── siamese_model.pth  # saved PyTorch model file containing the trained Siamese network weights
+├── MODEL_DIAGRAMS
+├── Technical_summary.pdf
+├── .gitattributes
+├── .gitignore
+├── requirements.txt
+└── README.md
 
-    Random Forest
+## Task A: Gender Classification
 
-    SVM
+### Goal
 
-    K-Nearest Neighbors
+Classify face images as **male** or **female** using pretrained CNNs as feature extractors and traditional ML classifiers.
 
-    XGBoost
+### Features
 
-5. Evaluation via:
+- Uses `ResNet50`, `EfficientNetB3`, and `VGGFace` (via DeepFace) for feature extraction.
+- Features concatenated and passed to:
+  - Logistic Regression
+  - Support Vector Machine (SVM)
+- Automatic caching for speed
+- Support for unseen test evaluation
 
-    5-Fold Stratified Cross-Validation
+### Expected Dataset Structure
 
-    Accuracy, Precision, Recall, F1 Score (Weighted)
+dataset/
+├── train/
+│ ├── male/
+│ └── female/
+├── val/
+│ ├── male/
+│ └── female/
+└── test/ (optional)
+├── male/
+└── female/
 
+### Run Instructions
 
-Performance Metrics-
-For each classifier:
+python task_a.py
 
-1. Cross-validation results
+Modify base_dataset_dir and test_dir in the main() function as needed.
 
-2. Final training metrics
+### Output
 
-3. Validation performance
+output of metrics on train, val (and optionally test) sets
 
-Metrics include:
+## Task B: Face Verification (Siamese Network)
 
-1. Accuracy
+### Goal
+Verify if a distorted face belongs to the same identity as a clean reference image. Identities in val/ and test/ are unseen during training.
 
-2. Precision
+### Features-
+1. ArcFace embeddings via DeepFace
 
-3. Recall
+2. Hard negative mining for contrastive learning
 
-4. F1 Score
+3. Siamese neural network trained on embedding pairs
 
+4. Caching of faces and embeddings for speed
 
+5. Evaluation with cosine similarity + thresholding
 
+### Expected Dataset Structure
+
+dataset/
+├── train/
+│   └── <person_id>/
+│       ├── clean.jpg
+│       └── distortion/
+│           └── distorted1.jpg
+├── val/
+│   └── <person_id>/...
+└── test/      (optional)
+    └── <person_id>/...
+
+### Run Instructions
+
+python task_b.py
+
+Modify the main() function with correct test_dir path (optional).
+
+### Output
+Accuracy, Precision, Recall, F1 Score for each of Train/Val/Test
+
+## Observational Results-
+Task A: Gender Classification
+Train Set
+Model	            Accuracy	Precision	Recall	F1 Score
+Logistic Regression	1.00	    1.00	    1.00	1.00
+SVM	                1.00	    1.00	    1.00	1.00
+
+Validation Set
+Model	            Accuracy	Precision	Recall	F1 Score
+Logistic Regression	0.9621	    0.9619	    0.9621	0.9617
+SVM	                0.9621	    0.9620	    0.9621	0.9616
+
+Task B: Face Verification
+Dataset	 Accuracy Precision	Recall	F1 Score
+Train	    1.00	1.00	1.00	1.00
+Validation	1.00	1.00	1.00	1.00
+
+## Dependencies
+Install required packages via:
+
+pip install -r requirements.txt
+
+## Caching & Reproducibility
+All intermediate data (embeddings, images, labels) are cached to accelerate reruns.
+
+Set SEED = 42 ensures deterministic behavior.
