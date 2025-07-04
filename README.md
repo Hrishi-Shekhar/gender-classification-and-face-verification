@@ -67,6 +67,7 @@ python task_a.py
 ```
 
 Modify the main() function with correct test_dir path (optional).
+No need to enter base_dir as it is stored as .pkl files.
 
 ### Output
 
@@ -109,6 +110,7 @@ python task_b.py
 ```
 
 Modify the main() function with correct test_dir path (optional).
+No need to enter base_dir as it is stored as .pkl files.
 
 ### Output
 Accuracy, Precision, Recall, F1 Score for each of Train/Val/Test
