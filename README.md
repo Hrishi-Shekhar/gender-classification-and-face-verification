@@ -66,7 +66,7 @@ dataset/
 python task_a.py
 ```
 
-Modify base_dataset_dir and test_dir in the main() function as needed.
+Modify the main() function with correct test_dir path (optional).
 
 ### Output
 
