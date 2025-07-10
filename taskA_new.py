@@ -1,187 +1,126 @@
-# face_classification_pipeline.py
-
 import os
-import warnings
-import cv2
+import sys
 import joblib
-import random
 import numpy as np
-from tqdm import tqdm
+import cv2
 from imutils import paths
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 import torch
-import torch.nn as nn
 import torchvision.models as models
 import torchvision.transforms as transforms
-from deepface import DeepFace
-from transformers.utils import logging as hf_logging
-
-# ------------------- Suppress Warnings -------------------
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-warnings.filterwarnings('ignore', category=DeprecationWarning)
-warnings.filterwarnings('ignore', message='.*_register_pytree_node is deprecated.*')
-warnings.filterwarnings('ignore', message='.*sparse_softmax_cross_entropy is deprecated.*')
-hf_logging.set_verbosity_error()
+from tqdm import tqdm
 
 # ------------------- Configuration -------------------
-SEED = 42
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)
-torch.backends.cudnn.deterministic = True
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 CACHE_DIR = "cache_taskA"
 MODELS_DIR = "saved_models_taskA"
-os.makedirs(CACHE_DIR, exist_ok=True)
-os.makedirs(MODELS_DIR, exist_ok=True)
+SEED = 42
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ------------------- Utilities -------------------
-def cache_path(name): return os.path.join(CACHE_DIR, name)
-def load_pkl(name): return joblib.load(cache_path(name)) if os.path.exists(cache_path(name)) else None
-def save_pkl(obj, name): joblib.dump(obj, cache_path(name))
-def load_npy(name): return np.load(cache_path(name)) if os.path.exists(cache_path(name)) else None
-def save_npy(array, name): np.save(cache_path(name), array)
+# ------------------- Utility Functions -------------------
+def load_pkl(name):
+    path = os.path.join(CACHE_DIR, name)
+    if os.path.exists(path):
+        return joblib.load(path)
+    else:
+        raise FileNotFoundError(f"File not found: {path}")
 
-def preprocess_image(image_path, target_size):
+def load_npy(name):
+    path = os.path.join(CACHE_DIR, name)
+    if os.path.exists(path):
+        return np.load(path)
+    else:
+        raise FileNotFoundError(f"File not found: {path}")
+
+def preprocess_image(image_path, target_size=(224,224)):
     image = cv2.imread(image_path)
-    if image is None: raise ValueError(f"Could not read image: {image_path}")
+    if image is None:
+        raise ValueError(f"Could not read image: {image_path}")
     image = cv2.resize(image, target_size)
-    return image.astype("float32") / 255.0
+    image = image.astype("float32") / 255.0
+    return image
 
-def load_images_and_labels(image_paths, target_size):
-    data, labels = [], []
-    for path in image_paths:
-        data.append(preprocess_image(path, target_size))
-        labels.append(os.path.basename(os.path.dirname(path)))
-    return np.array(data), np.array(labels)
-
-def extract_deepface_features(image_paths, split):
-    cached = load_npy(f"{split}_deepface.npy")
-    if cached is not None: return cached
-    features = []
-    for path in tqdm(image_paths, desc=f"DeepFace ({split})"):
-        try:
-            emb = DeepFace.represent(path, model_name='VGG-Face', enforce_detection=False)[0]['embedding']
-            features.append(emb)
-        except:
-            features.append(np.zeros(2622))
-    features = np.array(features)
-    save_npy(features, f"{split}_deepface.npy")
-    return features
-
+# ------------------- Torch Model Feature Extractor -------------------
 def build_torch_model(arch):
     base = arch(pretrained=True)
     base.eval()
-    for p in base.parameters(): p.requires_grad = False
-    return nn.Sequential(*list(base.children())[:-1]).to(device)
+    for p in base.parameters():
+        p.requires_grad = False
+    # Remove final classifier layer
+    return torch.nn.Sequential(*list(base.children())[:-1]).to(DEVICE)
 
-def extract_torch_features(model, images, split, name):
-    cached = load_npy(f"{split}_{name}.npy")
-    if cached is not None: return cached
+def extract_torch_features(model, images, batch_size=32):
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Resize((224, 224)),
+        transforms.Resize((224,224)),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
     feats = []
+    model.eval()
     with torch.no_grad():
-        for img in tqdm(images, desc=f"{split} {name}"):
-            tensor = transform(img).unsqueeze(0).to(device)
-            feat = model(tensor).cpu().numpy().squeeze()
-            feats.append(feat)
-    feats = np.array(feats)
-    save_npy(feats, f"{split}_{name}.npy")
-    return feats
+        for i in tqdm(range(0, len(images), batch_size), desc="Extracting features"):
+            batch_imgs = images[i:i+batch_size]
+            batch_tensors = torch.stack([transform(img) for img in batch_imgs]).to(DEVICE)
+            batch_feats = model(batch_tensors).cpu().numpy()
+            batch_feats = batch_feats.reshape(batch_feats.shape[0], -1)  # flatten output
+            feats.append(batch_feats)
+    return np.vstack(feats)
 
-def evaluate_model(clf, X, y, name):
+# ------------------- Evaluation -------------------
+def evaluate_model(clf, X, y):
     preds = clf.predict(X)
-    print(f"\n{name} Metrics")
-    print(f"Accuracy:  {accuracy_score(y, preds):.4f}")
-    print(f"Precision: {precision_score(y, preds, average='weighted'):.4f}")
-    print(f"Recall:    {recall_score(y, preds, average='weighted'):.4f}")
-    print(f"F1 Score:  {f1_score(y, preds, average='weighted'):.4f}")
+    acc = accuracy_score(y, preds)
+    prec = precision_score(y, preds, average='weighted')
+    rec = recall_score(y, preds, average='weighted')
+    f1 = f1_score(y, preds, average='weighted')
+    print(f"Accuracy:  {acc:.4f}")
+    print(f"Precision: {prec:.4f}")
+    print(f"Recall:    {rec:.4f}")
+    print(f"F1 Score:  {f1:.4f}")
 
-# ------------------- Main Callable -------------------
-def run_pipeline(base_dataset_dir=None, test_dir=None):
-    target_size = (224, 224)
+# ------------------- Main Inference -------------------
+def main(test_dir):
+    if not os.path.exists(test_dir):
+        raise ValueError(f"Test directory not found: {test_dir}")
+
+    # Load label encoder, scaler, and classifiers
+    le = load_pkl("label_encoder.pkl")
+    scaler = load_pkl("scaler.pkl")
+
+    clf_lr = joblib.load(os.path.join(MODELS_DIR, "Logistic_Regression.pkl"))
+    clf_svm = joblib.load(os.path.join(MODELS_DIR, "SVM.pkl"))
+
+    # Load images and labels from test_dir
+    image_paths = list(paths.list_images(test_dir))
+    images = [preprocess_image(p) for p in image_paths]
+    labels_str = [os.path.basename(os.path.dirname(p)) for p in image_paths]
+    labels = le.transform(labels_str)
+
+    # Build torch models for feature extraction
     resnet = build_torch_model(models.resnet50)
     efficient = build_torch_model(models.efficientnet_b3)
 
-    splits = ['train', 'val']
-    images, labels, features = {}, {}, {}
+    # Extract features
+    feats_resnet = extract_torch_features(resnet, images)
+    feats_efficient = extract_torch_features(efficient, images)
 
-    for split in splits:
-        img_file = f"{split}_labels.pkl"
-        if base_dataset_dir and not os.path.exists(cache_path(img_file)):
-            print(f"[INFO] Processing {split} from images...")
-            img_paths = list(paths.list_images(os.path.join(base_dataset_dir, split)))
-            X, y = load_images_and_labels(img_paths, target_size)
-            save_pkl(img_paths, f"{split}_paths.pkl")
-            save_pkl(y, img_file)
-            labels[split] = y
-            images[split] = X
-        else:
-            print(f"[INFO] Loading {split} from cache...")
-            labels[split] = load_pkl(img_file)
-            images[split] = None
+    # Load cached deepface features for test (assumes cached, else error)
+    deepface_feats = load_npy("test_deepface.npy")  # Must be precomputed and cached exactly
 
-    le = load_pkl("label_encoder.pkl")
-    if le is None:
-        le = LabelEncoder()
-        le.fit(labels['train'])
-        save_pkl(le, "label_encoder.pkl")
-    for split in splits:
-        labels[split] = le.transform(labels[split])
+    # Combine features and scale
+    X_test = np.concatenate([feats_resnet, feats_efficient, deepface_feats], axis=1)
+    X_test = scaler.transform(X_test)
 
-    for split in splits:
-        if images[split] is not None:
-            img_paths = load_pkl(f"{split}_paths.pkl")
-            res = extract_torch_features(resnet, images[split], split, 'res')
-            eff = extract_torch_features(efficient, images[split], split, 'eff')
-            df = extract_deepface_features(img_paths, split)
-        else:
-            res = load_npy(f"{split}_res.npy")
-            eff = load_npy(f"{split}_eff.npy")
-            df = load_npy(f"{split}_deepface.npy")
-        features[split] = np.concatenate([res, eff, df], axis=1)
+    print("\n--- Logistic Regression Test Results ---")
+    evaluate_model(clf_lr, X_test, labels)
 
-    scaler = load_pkl("scaler.pkl")
-    if scaler is None:
-        scaler = StandardScaler().fit(features['train'])
-        save_pkl(scaler, "scaler.pkl")
-    for split in splits:
-        features[split] = scaler.transform(features[split])
+    print("\n--- SVM Test Results ---")
+    evaluate_model(clf_svm, X_test, labels)
 
-    classifiers = {
-        "Logistic Regression": LogisticRegression(max_iter=1000, n_jobs=-1, random_state=SEED),
-        "SVM": SVC(kernel='linear', probability=True, random_state=SEED)
-    }
-
-    for name, clf in classifiers.items():
-        path = os.path.join(MODELS_DIR, f"{name.replace(' ', '_')}.pkl")
-        if os.path.exists(path):
-            print(f"\n[INFO] Loading saved model: {name}")
-            clf = joblib.load(path)
-        else:
-            print(f"\n[INFO] Training: {name}")
-            clf.fit(features['train'], labels['train'])
-            joblib.dump(clf, path)
-
-        evaluate_model(clf, features['train'], labels['train'], 'Train')
-        evaluate_model(clf, features['val'], labels['val'], 'Val')
-
-        if test_dir:
-            test_paths = list(paths.list_images(test_dir))
-            test_images, test_labels = load_images_and_labels(test_paths, target_size)
-            test_labels = le.transform(test_labels)
-            res = extract_torch_features(resnet, test_images, 'test', 'res')
-            eff = extract_torch_features(efficient, test_images, 'test', 'eff')
-            df = extract_deepface_features(test_paths, 'test')
-            test_feat = scaler.transform(np.concatenate([res, eff, df], axis=1))
-            evaluate_model(clf, test_feat, test_labels, 'Test')
+# ------------------- Entry -------------------
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python task_a.py <path_to_test_folder>")
+        exit(1)
+    test_folder = sys.argv[1]
+    main(test_folder)
