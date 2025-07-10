@@ -4,43 +4,37 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from deepface import DeepFace
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 import pickle
+from deepface import DeepFace
 
-# --------------------- Configuration ---------------------
+# ------------------- Configuration -------------------
 SEED = 42
 EMBED_DIM = 512
-DETECTOR = 'opencv'
-EMBED_MODEL = 'ArcFace'
-FACE_CACHE = 'face_cache'
-EMBED_CACHE = 'embed_cache'
 PAIR_CACHE = 'cached_pairs.npz'
 MODEL_PATH = 'siamese_model.pth'
 PREPROCESSED_DIR = 'preprocessed'
-
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-# --------------------- Dataset ---------------------
+# ------------------- Dataset & Model -------------------
 class SiameseDataset(Dataset):
-    def __init__(self, p1, p2, labels):
+    def _init_(self, p1, p2, labels):
         self.p1 = torch.tensor(p1, dtype=torch.float32)
         self.p2 = torch.tensor(p2, dtype=torch.float32)
         self.labels = torch.tensor(labels, dtype=torch.float32)
-    def __len__(self): return len(self.labels)
-    def __getitem__(self, idx):
+    def _len_(self): return len(self.labels)
+    def _getitem_(self, idx):
         return self.p1[idx], self.p2[idx], self.labels[idx]
 
-# --------------------- Model ---------------------
 class SiameseModel(nn.Module):
-    def __init__(self):
-        super().__init__()
+    def _init_(self):
+        super()._init_()
         self.fc = nn.Sequential(
             nn.Linear(EMBED_DIM * 2, 256),
             nn.ReLU(),
@@ -52,34 +46,50 @@ class SiameseModel(nn.Module):
         concat = torch.cat([a, b], dim=1)
         return self.fc(concat).squeeze()
 
-# --------------------- Load Preprocessed Data ---------------------
-def load_preprocessed_data():
-    train_pkl = os.path.join(PREPROCESSED_DIR, "train_data.pkl")
-    val_pkl = os.path.join(PREPROCESSED_DIR, "val_data.pkl")
-    if not (os.path.exists(train_pkl) and os.path.exists(val_pkl)):
-        raise FileNotFoundError("Preprocessed train or val data not found. Please preprocess before testing.")
-    with open(train_pkl, 'rb') as f:
-        train_data = pickle.load(f)
-    with open(val_pkl, 'rb') as f:
-        val_data = pickle.load(f)
-    return train_data, val_data
+# ------------------- Utility functions -------------------
+def load_pickle_data(split):
+    pkl_path = os.path.join(PREPROCESSED_DIR, f"{split}_data.pkl")
+    if not os.path.exists(pkl_path):
+        raise FileNotFoundError(f"Pickle file for {split} data not found at {pkl_path}")
+    with open(pkl_path, 'rb') as f:
+        data = pickle.load(f)
+    print(f"Loaded {split} data from {pkl_path}")
+    return data
 
-# --------------------- Create Embedding Pairs ---------------------
-def create_embedding_pairs(data, max_pairs_per_class=10):
+def load_cached_pairs():
     if not os.path.exists(PAIR_CACHE):
-        raise FileNotFoundError("Cached pairs file not found. Please generate pairs before testing.")
+        raise FileNotFoundError(f"Cached pairs file {PAIR_CACHE} not found.")
     cached = np.load(PAIR_CACHE)
-    return cached['p1'], cached['p2'], cached['labels']
+    p1, p2, labels = cached['p1'], cached['p2'], cached['labels']
+    print(f"Loaded cached pairs from {PAIR_CACHE}")
+    return p1, p2, labels
 
-# --------------------- Evaluation ---------------------
-def evaluate_split(data, model, split_name="VAL", threshold=0.5):
+# ------------------- Training & Evaluation -------------------
+def train(model, loader, epochs=10):
+    model.train()
+    model.to(DEVICE)
+    optim = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss_fn = nn.BCELoss()
+    for epoch in range(epochs):
+        total_loss = 0
+        for a, b, y in loader:
+            a, b, y = a.to(DEVICE), b.to(DEVICE), y.to(DEVICE)
+            optim.zero_grad()
+            preds = model(a, b)
+            loss = loss_fn(preds, y)
+            loss.backward()
+            optim.step()
+            total_loss += loss.item()
+        print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss/len(loader):.4f}")
+
+def evaluate(data, model, split_name="VAL", threshold=0.5):
     model.eval()
     model.to(DEVICE)
     y_true, y_pred = [], []
     with torch.no_grad():
         for person_id, sets in tqdm(data.items(), desc=f"Evaluating [{split_name}]"):
-            clean = sets['clean']
-            distorted = sets['distorted']
+            clean = sets.get('clean', [])
+            distorted = sets.get('distorted', [])
             if not clean or not distorted:
                 continue
             clean_tensor = torch.tensor(clean, dtype=torch.float32).to(DEVICE)
@@ -90,6 +100,7 @@ def evaluate_split(data, model, split_name="VAL", threshold=0.5):
                 pred = person_id if np.max(scores) > threshold else "unknown"
                 y_true.append(person_id)
                 y_pred.append(pred)
+    # Binary classification metrics: 1 if predicted correctly, else 0
     y_true_binary = [1] * len(y_true)
     y_pred_binary = [1 if p == t else 0 for p, t in zip(y_pred, y_true)]
     acc = accuracy_score(y_true_binary, y_pred_binary)
@@ -101,39 +112,98 @@ def evaluate_split(data, model, split_name="VAL", threshold=0.5):
     print(f"[{split_name}] Recall:    {recall:.4f}")
     print(f"[{split_name}] F1 Score:  {f1:.4f}")
 
-# --------------------- Main ---------------------
-def main(test_dir):
-    if test_dir is None or not os.path.exists(test_dir):
-        raise ValueError("Please provide a valid test directory path")
+# ------------------- Test directory evaluation -------------------
+def evaluate_unseen_test(test_dir, model, embed_cache_dir='embed_cache', detector_backend='opencv', embed_model='ArcFace'):
+    """
+    Evaluate unseen test images directly without caching.
+    Extract embeddings on the fly and compare to known embeddings in train/val.
+    """
 
-    # Load preprocessed data (train and val)
-    train_data, val_data = load_preprocessed_data()
+    from deepface.commons import functions
+    import glob
 
-    # Load cached pairs from train data (needed to match input size)
-    p1, p2, labels = create_embedding_pairs(train_data)
-    test_data = None
+    if not os.path.exists(test_dir):
+        print(f"Test directory {test_dir} does not exist.")
+        return
 
-    # Load test data embeddings on-the-fly (since test data is new)
-    from task_b import load_embeddings  # Assuming load_embeddings is implemented exactly as in your code
-    test_data = load_embeddings(test_dir, split='test')
+    print(f"\nEvaluating unseen test images from: {test_dir}")
 
-    # Load model and weights
+    # Load train/val data embeddings (flatten all known embeddings)
+    train_data = load_pickle_data('train')
+    val_data = load_pickle_data('val')
+    known_embeddings = []
+    known_labels = []
+
+    for split_data in [train_data, val_data]:
+        for pid, sets in split_data.items():
+            for emb in sets.get('clean', []) + sets.get('distorted', []):
+                known_embeddings.append(emb)
+                known_labels.append(pid)
+    known_embeddings = np.array(known_embeddings)
+
+    model.eval()
+    model.to(DEVICE)
+
+    # For each test image:
+    test_image_paths = []
+    for ext in ('.jpg', '.jpeg', '*.png'):
+        test_image_paths.extend(glob.glob(os.path.join(test_dir, ext)))
+
+    y_true = []
+    y_pred = []
+
+    for img_path in tqdm(test_image_paths, desc="Processing test images"):
+        try:
+            # Extract embedding without caching
+            faces = DeepFace.extract_faces(img_path=img_path, detector_backend=detector_backend,
+                                           enforce_detection=False, align=True)
+            if not faces:
+                continue
+            face_img = faces[0]['face'] / 255.0
+            emb = DeepFace.represent(face_img, model_name=embed_model, enforce_detection=False)[0]['embedding']
+            emb_tensor = torch.tensor(emb, dtype=torch.float32).unsqueeze(0).to(DEVICE)
+
+            # Compare to all known embeddings with the model
+            known_tensor = torch.tensor(known_embeddings, dtype=torch.float32).to(DEVICE)
+            emb_repeated = emb_tensor.repeat(len(known_tensor), 1)
+            scores = model(emb_repeated, known_tensor).cpu().numpy()
+
+            # Find best match above threshold
+            max_idx = np.argmax(scores)
+            max_score = scores[max_idx]
+            pred_label = known_labels[max_idx] if max_score > 0.5 else "unknown"
+
+            # Since no ground truth label for test image, just print prediction
+            print(f"Image: {os.path.basename(img_path)} Predicted: {pred_label} (score={max_score:.3f})")
+
+        except Exception as e:
+            print(f"Failed to process {img_path}: {e}")
+
+# ------------------- Main pipeline -------------------
+def run_siamese_pipeline(test_dir=None):
+    # Load train/val data from cached pickle files
+    train_data = load_pickle_data('train')
+    val_data = load_pickle_data('val')
+
+    # Load cached pairs and create DataLoader
+    p1, p2, labels = load_cached_pairs()
+    train_loader = DataLoader(SiameseDataset(p1, p2, labels), batch_size=64, shuffle=True)
+
+    # Load or train model
     model = SiameseModel()
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(f"Model weights not found at {MODEL_PATH}")
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    if os.path.exists(MODEL_PATH):
+        print(f"\nLoading model from {MODEL_PATH}")
+        model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    else:
+        print("Model not found, training...")
+        train(model, train_loader, epochs=10)
+        torch.save(model.state_dict(), MODEL_PATH)
+        print(f"Model saved to {MODEL_PATH}")
 
-    # Evaluate all splits
-    evaluate_split(train_data, model, split_name="TRAIN")
-    evaluate_split(val_data, model, split_name="VAL")
-    if test_data:
-        evaluate_split(test_data, model, split_name="TEST")
+    # Evaluate on train and val splits
+    evaluate(train_data, model, split_name="TRAIN")
+    evaluate(val_data, model, split_name="VAL")
 
-# --------------------- Entry ---------------------
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 2:
-        print("Usage: python test.py <path_to_test_folder>")
-        exit(1)
-    test_dir = sys.argv[1]
-    main(test_dir)
+    # If test_dir given, evaluate on unseen test images
+    if test_dir:
+        evaluate_unseen_test(test_dir, model)
