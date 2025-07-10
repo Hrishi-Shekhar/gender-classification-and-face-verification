@@ -61,14 +61,6 @@ dataset/
 └── female/
 ```
 
-### Run Instructions
-```bash
-python task_a.py
-```
-
-Modify the main() function with correct test_dir path (optional).
-No need to enter base_dir as it is stored as .pkl files.
-
 ### Output
 
 output of metrics on train, val (and optionally test) sets
@@ -104,16 +96,21 @@ dataset/
     └── <person_id>/...
 ```
 
-### Run Instructions
-```bash
-python task_b.py
-```
-
-Modify the main() function with correct test_dir path (optional).
-No need to enter base_dir as it is stored as .pkl files.
-
 ### Output
 Accuracy, Precision, Recall, F1 Score for each of Train/Val/Test
+
+## Run Instructions-
+To run both pipelines sequentially using their respective test directories, run:
+```bash
+python test.py
+```
+Before running, modify the test_dir paths inside test.py to point to your test image directories for:
+
+1. Task A (Gender Classification)
+
+2. Task B (Face Verification)
+
+No need to provide the base dataset directory as cached data is used for both tasks.
 
 ## Observational Results-
 ### Task A: Gender Classification
