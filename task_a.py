@@ -1,14 +1,5 @@
 import os
 import warnings
-# Suppress TensorFlow logs
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-# Suppress specific warnings
-warnings.filterwarnings('ignore', category=DeprecationWarning)
-warnings.filterwarnings('ignore', message='.*_register_pytree_node is deprecated.*')
-warnings.filterwarnings('ignore', message='.*sparse_softmax_cross_entropy is deprecated.*')
-# Suppress transformers logs
-from transformers.utils import logging
-logging.set_verbosity_error()
 import cv2
 import joblib
 import random
@@ -24,6 +15,14 @@ import torch.nn as nn
 import torchvision.models as models
 import torchvision.transforms as transforms
 from deepface import DeepFace
+
+# Suppress logs & warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+warnings.filterwarnings('ignore', message='._register_pytree_node is deprecated.')
+warnings.filterwarnings('ignore', message='.sparse_softmax_cross_entropy is deprecated.')
+from transformers.utils import logging
+logging.set_verbosity_error()
 
 # ------------------- Configuration -------------------
 SEED = 42
@@ -78,7 +77,8 @@ def load_images_and_labels(image_paths, target_size):
 # ------------------- DeepFace Features -------------------
 def extract_deepface_features(image_paths, split):
     cached = load_npy(f"{split}_deepface.npy")
-    if cached is not None: return cached
+    if cached is not None:
+        return cached
     features = []
     for path in tqdm(image_paths, desc=f"DeepFace ({split})"):
         try:
@@ -94,12 +94,14 @@ def extract_deepface_features(image_paths, split):
 def build_torch_model(arch):
     base = arch(pretrained=True)
     base.eval()
-    for p in base.parameters(): p.requires_grad = False
+    for p in base.parameters():
+        p.requires_grad = False
     return nn.Sequential(*list(base.children())[:-1]).to(device)
 
 def extract_torch_features(model, images, split, name):
     cached = load_npy(f"{split}_{name}.npy")
-    if cached is not None: return cached
+    if cached is not None:
+        return cached
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize((224, 224)),
@@ -124,8 +126,8 @@ def evaluate_model(clf, X, y, name):
     print(f"Recall:    {recall_score(y, preds, average='weighted'):.4f}")
     print(f"F1 Score:  {f1_score(y, preds, average='weighted'):.4f}")
 
-# ------------------- Main -------------------
-def main(base_dataset_dir=None, test_dir=None):
+# ------------------- Pipeline -------------------
+def run_pipeline(base_dataset_dir=None, test_dir=None):
     target_size = (224, 224)
     resnet = build_torch_model(models.resnet50)
     efficient = build_torch_model(models.efficientnet_b3)
@@ -170,7 +172,7 @@ def main(base_dataset_dir=None, test_dir=None):
             df = load_npy(f"{split}_deepface.npy")
         features[split] = np.concatenate([res, eff, df], axis=1)
 
-    # Normalize
+    # Normalize features
     scaler = load_pkl("scaler.pkl")
     if scaler is None:
         scaler = StandardScaler().fit(features['train'])
@@ -209,9 +211,3 @@ def main(base_dataset_dir=None, test_dir=None):
             df = extract_deepface_features(test_paths, 'test')
             test_feat = scaler.transform(np.concatenate([res, eff, df], axis=1))
             evaluate_model(clf, test_feat, test_labels, 'Test')
-
-# ------------------- Entry -------------------
-if __name__ == "__main__":
-    base_dataset_dir = None # base dir needed only on first run
-    test_dir = None  # or r"path/to/unseen/test"
-    main(base_dataset_dir, test_dir)
