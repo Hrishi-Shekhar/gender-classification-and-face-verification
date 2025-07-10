@@ -1,36 +1,13 @@
-# test.py
+from task_a import run_pipeline as run_task_a
+from task_b import run_siamese_pipeline as run_task_b
 
-import sys
-import os
+if _name_ == "_main_":
+    # Set your dataset directories here
+    test_dir_task_a = "/path/to/test_images_task_a"  # Task A test images dir
+    test_dir_task_b = "/path/to/test_images_task_b"  # Task B test images dir
 
-# Import both task pipelines
-from taskA_new import run_pipeline as run_task_a
-from taskb_new import run_siamese_pipeline as run_task_b # type: ignore
+    print("\n=== Running Task A Pipeline ===")
+    run_task_a(test_dir=test_dir_task_a)
 
-def main():
-    if len(sys.argv) != 2:
-        print("Usage: python test.py /path/to/test_folder")
-        sys.exit(1)
-
-    test_folder = sys.argv[1]
-
-    if not os.path.isdir(test_folder):
-        print(f"Provided test directory does not exist: {test_folder}")
-        sys.exit(1)
-
-    print("\n========== Running Task A: Face Classification ==========")
-    try:
-        run_task_a(base_dataset_dir=None, test_dir=test_folder)
-    except Exception as e:
-        print(f"[ERROR] Task A failed: {e}")
-        sys.exit(1)
-
-    print("\n========== Running Task B: Face Verification ==========")
-    try:
-        run_task_b(train_dir=None, val_dir=None, test_dir=test_folder)
-    except Exception as e:
-        print(f"[ERROR] Task B failed: {e}")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+    print("\n=== Running Task B (Siamese) Pipeline ===")
+    run_task_b(test_dir=test_dir_task_b)
