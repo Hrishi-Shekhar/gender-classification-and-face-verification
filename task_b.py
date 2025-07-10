@@ -1,6 +1,4 @@
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import random
 import numpy as np
 import torch
@@ -14,7 +12,6 @@ import pickle
 
 # --------------------- Configuration ---------------------
 SEED = 42
-IMAGE_SIZE = (160, 160)
 EMBED_DIM = 512
 DETECTOR = 'opencv'
 EMBED_MODEL = 'ArcFace'
@@ -26,118 +23,9 @@ PREPROCESSED_DIR = 'preprocessed'
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-os.makedirs(FACE_CACHE, exist_ok=True)
-os.makedirs(EMBED_CACHE, exist_ok=True)
-os.makedirs(PREPROCESSED_DIR, exist_ok=True)
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
-
-# --------------------- Feature Caching ---------------------
-def get_cached_face(split, person_id, img_path):
-    key = f"{split}_{person_id}_{os.path.basename(img_path)}"
-    cache_path = os.path.join(FACE_CACHE, key + '.npy')
-    if os.path.exists(cache_path):
-        return np.load(cache_path)
-    try:
-        faces = DeepFace.extract_faces(img_path=img_path, detector_backend=DETECTOR,
-                                       enforce_detection=False, align=True)
-        if not faces:
-            return None
-        face_img = faces[0]['face'] / 255.0
-        np.save(cache_path, face_img)
-        return face_img
-    except Exception as e:
-        print(f"Face extraction failed: {img_path} - {e}")
-        return None
-
-def get_cached_embedding(split, person_id, img_path):
-    key = f"{split}_{person_id}_{os.path.basename(img_path)}"
-    cache_path = os.path.join(EMBED_CACHE, key + '.npy')
-    if os.path.exists(cache_path):
-        return np.load(cache_path)
-    face = get_cached_face(split, person_id, img_path)
-    if face is None:
-        return None
-    try:
-        result = DeepFace.represent(face, model_name=EMBED_MODEL, enforce_detection=False)[0]['embedding']
-        np.save(cache_path, result)
-        return result
-    except Exception as e:
-        print(f"Embedding failed: {img_path} - {e}")
-        return None
-
-# --------------------- Data Loader ---------------------
-def load_embeddings(folder, split='train', max_images_per_person=50):
-    pkl_path = os.path.join(PREPROCESSED_DIR, f"{split}_data.pkl")
-    if os.path.exists(pkl_path):
-        print(f"\nLoaded {split}_data from cache: {pkl_path}")
-        with open(pkl_path, 'rb') as f:
-            return pickle.load(f)
-
-    data = {}
-    for person_id in tqdm(os.listdir(folder), desc=f"Loading {split} embeddings"):
-        person_path = os.path.join(folder, person_id)
-        if not os.path.isdir(person_path):
-            continue
-        clean_embs, distorted_embs = [], []
-        clean_imgs = [f for f in os.listdir(person_path) if f.lower().endswith(('jpg', 'jpeg', 'png'))]
-        for f in clean_imgs[:max_images_per_person]:
-            emb = get_cached_embedding(split, person_id, os.path.join(person_path, f))
-            if emb is not None:
-                clean_embs.append(emb)
-
-        distortion_path = os.path.join(person_path, 'distortion')
-        if os.path.exists(distortion_path):
-            distorted_imgs = [f for f in os.listdir(distortion_path) if f.lower().endswith(('jpg', 'jpeg', 'png'))]
-            for f in distorted_imgs[:max_images_per_person]:
-                emb = get_cached_embedding(split, person_id, os.path.join(distortion_path, f))
-                if emb is not None:
-                    distorted_embs.append(emb)
-
-        if len(clean_embs + distorted_embs) >= 2:
-            data[person_id] = {'clean': clean_embs, 'distorted': distorted_embs}
-
-    if split in ['train', 'val']:
-        with open(pkl_path, 'wb') as f:
-            pickle.dump(data, f)
-        print(f"\nSaved {split}_data to: {pkl_path}")
-    return data
-
-def create_embedding_pairs(data, max_pairs_per_class=10):
-    if os.path.exists(PAIR_CACHE):
-        print("\nLoading cached pairs...")
-        cached = np.load(PAIR_CACHE)
-        return cached['p1'], cached['p2'], cached['labels']
-
-    pairs, labels = [], []
-    identities = list(data.keys())
-    for person_id in tqdm(identities, desc="Generating pairs"):
-        embs = data[person_id]['clean'] + data[person_id]['distorted']
-        for _ in range(min(max_pairs_per_class, len(embs))):
-            a, b = random.sample(embs, 2)
-            pairs.append((a, b))
-            labels.append(1)
-
-        for _ in range(min(max_pairs_per_class, len(embs))):
-            a = random.choice(embs)
-            hardest_neg = None
-            max_sim = -1
-            for neg_id in identities:
-                if neg_id == person_id:
-                    continue
-                for neg_emb in data[neg_id]['clean'] + data[neg_id]['distorted']:
-                    sim = cosine_similarity([a], [neg_emb])[0][0]
-                    if sim > max_sim:
-                        max_sim = sim
-                        hardest_neg = neg_emb
-            if hardest_neg is not None:
-                pairs.append((a, hardest_neg))
-                labels.append(0)
-
-    p1, p2 = zip(*pairs)
-    np.savez(PAIR_CACHE, p1=p1, p2=p2, labels=labels)
-    return np.array(p1), np.array(p2), np.array(labels)
 
 # --------------------- Dataset ---------------------
 class SiameseDataset(Dataset):
@@ -164,23 +52,24 @@ class SiameseModel(nn.Module):
         concat = torch.cat([a, b], dim=1)
         return self.fc(concat).squeeze()
 
-# --------------------- Training ---------------------
-def train(model, loader, epochs=10):
-    model.train()
-    model.to(DEVICE)
-    optim = torch.optim.Adam(model.parameters(), lr=1e-3)
-    loss_fn = nn.BCELoss()
-    for epoch in range(epochs):
-        total_loss = 0
-        for a, b, y in loader:
-            a, b, y = a.to(DEVICE), b.to(DEVICE), y.to(DEVICE)
-            optim.zero_grad()
-            preds = model(a, b)
-            loss = loss_fn(preds, y)
-            loss.backward()
-            optim.step()
-            total_loss += loss.item()
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss/len(loader):.4f}")
+# --------------------- Load Preprocessed Data ---------------------
+def load_preprocessed_data():
+    train_pkl = os.path.join(PREPROCESSED_DIR, "train_data.pkl")
+    val_pkl = os.path.join(PREPROCESSED_DIR, "val_data.pkl")
+    if not (os.path.exists(train_pkl) and os.path.exists(val_pkl)):
+        raise FileNotFoundError("Preprocessed train or val data not found. Please preprocess before testing.")
+    with open(train_pkl, 'rb') as f:
+        train_data = pickle.load(f)
+    with open(val_pkl, 'rb') as f:
+        val_data = pickle.load(f)
+    return train_data, val_data
+
+# --------------------- Create Embedding Pairs ---------------------
+def create_embedding_pairs(data, max_pairs_per_class=10):
+    if not os.path.exists(PAIR_CACHE):
+        raise FileNotFoundError("Cached pairs file not found. Please generate pairs before testing.")
+    cached = np.load(PAIR_CACHE)
+    return cached['p1'], cached['p2'], cached['labels']
 
 # --------------------- Evaluation ---------------------
 def evaluate_split(data, model, split_name="VAL", threshold=0.5):
@@ -213,36 +102,28 @@ def evaluate_split(data, model, split_name="VAL", threshold=0.5):
     print(f"[{split_name}] F1 Score:  {f1:.4f}")
 
 # --------------------- Main ---------------------
-def main(test_dir=None):
-    train_pkl = os.path.join(PREPROCESSED_DIR, "train_data.pkl")
-    val_pkl = os.path.join(PREPROCESSED_DIR, "val_data.pkl")
+def main(test_dir):
+    if test_dir is None or not os.path.exists(test_dir):
+        raise ValueError("Please provide a valid test directory path")
 
-    if os.path.exists(train_pkl) and os.path.exists(val_pkl):
-        print("\nLoading train and val data from preprocessed .pkl files...")
-        with open(train_pkl, 'rb') as f: train_data = pickle.load(f)
-        with open(val_pkl, 'rb') as f: val_data = pickle.load(f)
-    # else:
-    #     root = 'Comys_Hackathon5 (1)/Comys_Hackathon5/Task_B'
-    #     train_data = load_embeddings(os.path.join(root, 'train'), 'train')
-    #     val_data = load_embeddings(os.path.join(root, 'val'), 'val')
+    # Load preprocessed data (train and val)
+    train_data, val_data = load_preprocessed_data()
 
-    test_data = None
-    if test_dir and os.path.exists(test_dir):
-        test_data = load_embeddings(test_dir, split='test')
-
+    # Load cached pairs from train data (needed to match input size)
     p1, p2, labels = create_embedding_pairs(train_data)
-    train_loader = DataLoader(SiameseDataset(p1, p2, labels), batch_size=64, shuffle=True)
+    test_data = None
+
+    # Load test data embeddings on-the-fly (since test data is new)
+    from task_b import load_embeddings  # Assuming load_embeddings is implemented exactly as in your code
+    test_data = load_embeddings(test_dir, split='test')
+
+    # Load model and weights
     model = SiameseModel()
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"Model weights not found at {MODEL_PATH}")
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 
-    if os.path.exists(MODEL_PATH):
-        print(f"\nLoading model from {MODEL_PATH}")
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
-    else:
-        print("\nTraining model...")
-        train(model, train_loader, epochs=10)
-        print(f"\nSaving model to {MODEL_PATH}")
-        torch.save(model.state_dict(), MODEL_PATH)
-
+    # Evaluate all splits
     evaluate_split(train_data, model, split_name="TRAIN")
     evaluate_split(val_data, model, split_name="VAL")
     if test_data:
@@ -250,5 +131,9 @@ def main(test_dir=None):
 
 # --------------------- Entry ---------------------
 if __name__ == "__main__":
-    test_dir = None
+    import sys
+    if len(sys.argv) != 2:
+        print("Usage: python test.py <path_to_test_folder>")
+        exit(1)
+    test_dir = sys.argv[1]
     main(test_dir)
