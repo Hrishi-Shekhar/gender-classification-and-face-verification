@@ -24,7 +24,8 @@ cd gender-classification-and-face-verification
 ├── cached_pairs.npz # stores precomputed positive and hard negative embedding pairs
 ├── siamese_model.pth  # saved PyTorch model file containing the trained Siamese network weights
 ├── MODEL_DIAGRAMS
-├── Technical_summary.pdf
+├── TechnicalSummary.pdf
+├── test.py
 ├── .gitattributes
 ├── .gitignore
 ├── requirements.txt
