@@ -115,62 +115,6 @@ def evaluate(data, model, split_name="VAL", threshold=0.5):
     print(f"[{split_name}] Recall:    {recall:.4f}")
     print(f"[{split_name}] F1 Score:  {f1:.4f}")
 
-# ------------------- Test directory evaluation -------------------
-def evaluate_unseen_test(test_dir, model, embed_cache_dir='embed_cache', detector_backend='opencv', embed_model='ArcFace'):
-    from deepface.commons import functions
-    import glob
-
-    if not os.path.exists(test_dir):
-        print(f"Test directory {test_dir} does not exist.")
-        return
-
-    print(f"\nEvaluating unseen test images from: {test_dir}")
-
-    train_data = load_pickle_data('train')
-    val_data = load_pickle_data('val')
-    known_embeddings = []
-    known_labels = []
-
-    for split_data in [train_data, val_data]:
-        for pid, sets in split_data.items():
-            for emb in sets.get('clean', []) + sets.get('distorted', []):
-                known_embeddings.append(emb)
-                known_labels.append(pid)
-    known_embeddings = np.array(known_embeddings)
-
-    model.eval()
-    model.to(DEVICE)
-
-    test_image_paths = []
-    for ext in ('.jpg', '.jpeg', '*.png'):
-        test_image_paths.extend(glob.glob(os.path.join(test_dir, ext)))
-
-    y_true = []
-    y_pred = []
-
-    for img_path in tqdm(test_image_paths, desc="Processing test images"):
-        try:
-            faces = DeepFace.extract_faces(img_path=img_path, detector_backend=detector_backend,
-                                           enforce_detection=False, align=True)
-            if not faces:
-                continue
-            face_img = faces[0]['face'] / 255.0
-            emb = DeepFace.represent(face_img, model_name=embed_model, enforce_detection=False)[0]['embedding']
-            emb_tensor = torch.tensor(emb, dtype=torch.float32).unsqueeze(0).to(DEVICE)
-
-            known_tensor = torch.tensor(known_embeddings, dtype=torch.float32).to(DEVICE)
-            emb_repeated = emb_tensor.repeat(len(known_tensor), 1)
-            scores = model(emb_repeated, known_tensor).cpu().numpy()
-
-            max_idx = np.argmax(scores)
-            max_score = scores[max_idx]
-            pred_label = known_labels[max_idx] if max_score > 0.5 else "unknown"
-
-            print(f"Image: {os.path.basename(img_path)} Predicted: {pred_label} (score={max_score:.3f})")
-
-        except Exception as e:
-            print(f"Failed to process {img_path}: {e}")
-
 # ------------------- Main pipeline -------------------
 def run_siamese_pipeline(test_dir=None):
     train_data = load_pickle_data('train')
@@ -193,4 +137,6 @@ def run_siamese_pipeline(test_dir=None):
     evaluate(val_data, model, split_name="VAL")
 
     if test_dir:
-        evaluate_unseen_test(test_dir, model)
+        from task_b_helper import load_embeddings
+        test_data = load_embeddings(test_dir, split='test')
+        evaluate(test_data, model, split_name="TEST")
