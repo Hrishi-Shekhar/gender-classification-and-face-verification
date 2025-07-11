@@ -24,17 +24,20 @@ torch.manual_seed(SEED)
 
 # ------------------- Dataset & Model -------------------
 class SiameseDataset(Dataset):
-    def _init_(self, p1, p2, labels):
+    def __init__(self, p1, p2, labels):
         self.p1 = torch.tensor(p1, dtype=torch.float32)
         self.p2 = torch.tensor(p2, dtype=torch.float32)
         self.labels = torch.tensor(labels, dtype=torch.float32)
-    def _len_(self): return len(self.labels)
-    def _getitem_(self, idx):
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
         return self.p1[idx], self.p2[idx], self.labels[idx]
 
 class SiameseModel(nn.Module):
-    def _init_(self):
-        super()._init_()
+    def __init__(self):
+        super().__init__()
         self.fc = nn.Sequential(
             nn.Linear(EMBED_DIM * 2, 256),
             nn.ReLU(),
@@ -42,6 +45,7 @@ class SiameseModel(nn.Module):
             nn.Linear(256, 1),
             nn.Sigmoid()
         )
+
     def forward(self, a, b):
         concat = torch.cat([a, b], dim=1)
         return self.fc(concat).squeeze()
@@ -100,7 +104,6 @@ def evaluate(data, model, split_name="VAL", threshold=0.5):
                 pred = person_id if np.max(scores) > threshold else "unknown"
                 y_true.append(person_id)
                 y_pred.append(pred)
-    # Binary classification metrics: 1 if predicted correctly, else 0
     y_true_binary = [1] * len(y_true)
     y_pred_binary = [1 if p == t else 0 for p, t in zip(y_pred, y_true)]
     acc = accuracy_score(y_true_binary, y_pred_binary)
@@ -114,11 +117,6 @@ def evaluate(data, model, split_name="VAL", threshold=0.5):
 
 # ------------------- Test directory evaluation -------------------
 def evaluate_unseen_test(test_dir, model, embed_cache_dir='embed_cache', detector_backend='opencv', embed_model='ArcFace'):
-    """
-    Evaluate unseen test images directly without caching.
-    Extract embeddings on the fly and compare to known embeddings in train/val.
-    """
-
     from deepface.commons import functions
     import glob
 
@@ -128,7 +126,6 @@ def evaluate_unseen_test(test_dir, model, embed_cache_dir='embed_cache', detecto
 
     print(f"\nEvaluating unseen test images from: {test_dir}")
 
-    # Load train/val data embeddings (flatten all known embeddings)
     train_data = load_pickle_data('train')
     val_data = load_pickle_data('val')
     known_embeddings = []
@@ -144,7 +141,6 @@ def evaluate_unseen_test(test_dir, model, embed_cache_dir='embed_cache', detecto
     model.eval()
     model.to(DEVICE)
 
-    # For each test image:
     test_image_paths = []
     for ext in ('.jpg', '.jpeg', '*.png'):
         test_image_paths.extend(glob.glob(os.path.join(test_dir, ext)))
@@ -154,7 +150,6 @@ def evaluate_unseen_test(test_dir, model, embed_cache_dir='embed_cache', detecto
 
     for img_path in tqdm(test_image_paths, desc="Processing test images"):
         try:
-            # Extract embedding without caching
             faces = DeepFace.extract_faces(img_path=img_path, detector_backend=detector_backend,
                                            enforce_detection=False, align=True)
             if not faces:
@@ -163,17 +158,14 @@ def evaluate_unseen_test(test_dir, model, embed_cache_dir='embed_cache', detecto
             emb = DeepFace.represent(face_img, model_name=embed_model, enforce_detection=False)[0]['embedding']
             emb_tensor = torch.tensor(emb, dtype=torch.float32).unsqueeze(0).to(DEVICE)
 
-            # Compare to all known embeddings with the model
             known_tensor = torch.tensor(known_embeddings, dtype=torch.float32).to(DEVICE)
             emb_repeated = emb_tensor.repeat(len(known_tensor), 1)
             scores = model(emb_repeated, known_tensor).cpu().numpy()
 
-            # Find best match above threshold
             max_idx = np.argmax(scores)
             max_score = scores[max_idx]
             pred_label = known_labels[max_idx] if max_score > 0.5 else "unknown"
 
-            # Since no ground truth label for test image, just print prediction
             print(f"Image: {os.path.basename(img_path)} Predicted: {pred_label} (score={max_score:.3f})")
 
         except Exception as e:
@@ -181,15 +173,12 @@ def evaluate_unseen_test(test_dir, model, embed_cache_dir='embed_cache', detecto
 
 # ------------------- Main pipeline -------------------
 def run_siamese_pipeline(test_dir=None):
-    # Load train/val data from cached pickle files
     train_data = load_pickle_data('train')
     val_data = load_pickle_data('val')
 
-    # Load cached pairs and create DataLoader
     p1, p2, labels = load_cached_pairs()
     train_loader = DataLoader(SiameseDataset(p1, p2, labels), batch_size=64, shuffle=True)
 
-    # Load or train model
     model = SiameseModel()
     if os.path.exists(MODEL_PATH):
         print(f"\nLoading model from {MODEL_PATH}")
@@ -200,10 +189,8 @@ def run_siamese_pipeline(test_dir=None):
         torch.save(model.state_dict(), MODEL_PATH)
         print(f"Model saved to {MODEL_PATH}")
 
-    # Evaluate on train and val splits
     evaluate(train_data, model, split_name="TRAIN")
     evaluate(val_data, model, split_name="VAL")
 
-    # If test_dir given, evaluate on unseen test images
     if test_dir:
         evaluate_unseen_test(test_dir, model)
