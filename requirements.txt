@@ -17,5 +17,4 @@ opencv-python==4.9.0.80
 # DeepFace for face recognition
 deepface==0.0.83
 
-# Optional for GPU determinism (already controlled in your code)
 # If CUDA is used, install the correct torch version via pip or conda
