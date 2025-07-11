@@ -31,7 +31,7 @@ class SiameseDataset(Dataset):
 
     def __len__(self):
         return len(self.labels)
-
+      
     def __getitem__(self, idx):
         return self.p1[idx], self.p2[idx], self.labels[idx]
 
