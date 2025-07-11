@@ -24,17 +24,18 @@ torch.manual_seed(SEED)
 
 # ------------------- Dataset & Model -------------------
 class SiameseDataset(Dataset):
-    def _init_(self, p1, p2, labels):
+    def __init__(self, p1, p2, labels):
         self.p1 = torch.tensor(p1, dtype=torch.float32)
         self.p2 = torch.tensor(p2, dtype=torch.float32)
         self.labels = torch.tensor(labels, dtype=torch.float32)
-    def _len_(self): return len(self.labels)
-    def _getitem_(self, idx):
+    def __len__(self):
+        return len(self.labels)
+    def __getitem__(self, idx):
         return self.p1[idx], self.p2[idx], self.labels[idx]
 
 class SiameseModel(nn.Module):
-    def _init_(self):
-        super()._init_()
+    def __init__(self):
+        super().__init__()
         self.fc = nn.Sequential(
             nn.Linear(EMBED_DIM * 2, 256),
             nn.ReLU(),
