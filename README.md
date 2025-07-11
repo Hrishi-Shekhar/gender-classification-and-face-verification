@@ -186,3 +186,7 @@ After installation, **clone the repo again** if you had already cloned it withou
 ```bash
 git clone https://github.com/Hrishi-Shekhar/gender-classification-and-face-verification.git
 ```
+
+⚠️ Important Compatibility Notice:
+This project has been tested and confirmed to work only with Python 3.10 and Python 3.11.
+Using Python 3.12 or newer may lead to unexpected errors or incompatibilities with dependencies or pretrained models
